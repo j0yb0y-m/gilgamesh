@@ -164,3 +164,53 @@ Status values: `LOCKED` (approved/final for Phase 1) · `PROVISIONAL` (best gues
 - Alert transport security model (TLS, token storage/encryption-at-rest) (doc 06) — **OPEN**
 - Storage retention numbers + SD-wear mitigations (doc 04) — **proposed, tunable**
 - Suricata RSS on a Pi 4 + ET Open ↔ Suricata 8 rule compat (doc 03) — **UNVERIFIED, blocks LOCKED**
+
+---
+
+## Phase 2 — Clarification batch answers (2026-10-14)
+
+The batch was asked once, after Phase 1. All answers below are `LOCKED` unless noted.
+
+### D-020 — Project licence: GPL-2.0-or-later; Scapy stays (resolves blocker A1)
+
+- **Decision:** License Gilgamesh **GPL-2.0-or-later**. Keep **Scapy** (`GPL-2.0-only`) in-process. Do **not** depend on `python-multipart` (Apache-2.0); accept only URL-encoded form bodies (htmx's default) so the combined work stays cleanly GPL-compatible.
+- **Reason:** The user chose the ecosystem-standard option; Scapy is explicitly allowed by C9; matching Suricata's GPLv2 keeps attribution simple. Dropping `python-multipart` removes the only Apache-2.0-in-GPL-2.0-only tension.
+- **Alternative rejected:** Permissive licence + stdlib `AF_PACKET` hot path (more code and risk for no requirement).
+- **Status:** LOCKED.
+- **Evidence:** doc 03 §5.1/§5.2; user answer Q1.
+
+### D-021 — Alert channels: Discord + Telegram + email (all three)
+
+- **Decision:** Implement all three notifiers, each independently enable-able, with per-channel minimum severity, quiet hours, retries/backoff, and a "Send test" button.
+- **Status:** LOCKED. **Evidence:** user answer Q2; doc 04 §6.
+
+### D-022 — UI language: English only, structured for later translation
+
+- **Decision:** Ship English. All user-facing strings centralised in a single `i18n`/strings table so an Arabic/RTL translation can be added later without touching logic. No RTL work in v1.
+- **Status:** LOCKED. **Evidence:** user answer Q3.
+
+### D-023 — Target OS: Raspberry Pi OS Lite 64-bit (Debian 13 trixie)
+
+- **Decision:** Deployment target is **Raspberry Pi OS Lite 64-bit** (Debian 13 `trixie`, Python 3.13.5). Kali ARM64 remains documented as an alternative only.
+- **Status:** LOCKED. **Evidence:** user answer Q4; doc 03 §1.
+
+### D-024 — Network placement: inline transparent bridge is the v1 default; no SPAN here
+
+- **Decision:** v1 default is the **inline transparent bridge** (`br0` over `eth0`+`eth1`, management IP on the bridge, STP off). Mode B (SPAN/mirror) is documented but not the default. The user has no managed switch with port mirroring.
+- **Status:** LOCKED. **Evidence:** user answer Q5; doc 01.
+
+### D-025 — GitHub: private repo now; revisit public after licence finalised
+
+- **Decision:** Create a **private** GitHub repository and push. Re-evaluate public visibility once the GPL-2.0-or-later licence and the secrets story are finalised.
+- **Status:** LOCKED. **Evidence:** user answer Q6.
+
+### D-026 — Scope: MVP only (deadline soon); v1.1 "Later" detectors deferred
+
+- **Decision:** The user has a **near deadline and asked for MVP only**. Build the full MVP (detectors #1–#6, event pipeline, notifiers, web UI, auth, health, hardening, install script). Items #7–#11 (IPv6 rogue RA/NDP, MAC flooding, ICMP redirect, DNS tunnelling, beaconing) are **deferred/out of scope for v1** and documented as future work.
+- **Impact:** Milestones are trimmed; no ML/heuristic work. Phase 10 "FP soak" and Phase 11 polish are reduced to what fits the deadline (a documented demo + a short FP-tolerance test).
+- **Status:** LOCKED. **Evidence:** user answer Q7.
+
+### D-027 — Suricata 8 + ET Open retained; trim rule subset if the Pi struggles
+
+- **Decision:** Keep **Suricata 8 + Emerging Threats Open** as Sensor A. If Pi 4 RSS is too high, choose a rule subset / per-category disabling and memory caps rather than dropping Suricata.
+- **Status:** LOCKED. **Evidence:** user answer Q8; doc 03 §2.4.
