@@ -1,0 +1,10 @@
+[Unit]
+Description=Update Gilgamesh/Suricata rules and reload
+
+[Service]
+Type=oneshot
+User=gilgamesh-sensor
+Group=gilgamesh-sensor
+WorkingDirectory=/opt/gilgamesh
+EnvironmentFile=/etc/gilgamesh/gilgamesh.env
+ExecStart=/usr/local/bin/uv run --no-sync gilgamesh-rules-update

@@ -1,0 +1,43 @@
+[Unit]
+Description=Gilgamesh packet-capture sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gilgamesh-sensor
+Group=gilgamesh-sensor
+SupplementaryGroups=gilgamesh
+WorkingDirectory=/opt/gilgamesh
+EnvironmentFile=/etc/gilgamesh/gilgamesh.env
+ExecStart=/usr/local/bin/uv run --no-sync gilgamesh-sensor
+Restart=on-failure
+RestartSec=5s
+StateDirectory=gilgamesh-sensor
+LogsDirectory=gilgamesh-sensor
+RuntimeDirectory=gilgamesh-sensor
+
+# capabilities: raw capture, no root
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=yes
+
+ProtectSystem=strict
+ReadWritePaths=/run/gilgamesh
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_PACKET
+
+[Install]
+WantedBy=multi-user.target
