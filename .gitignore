@@ -1,0 +1,31 @@
+# --- Python / uv ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+*.egg-info/
+dist/
+build/
+
+# --- Gilgamesh runtime data (NEVER commit) ---
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+*.env
+.env
+secrets/
+*.pem
+*.key
+*.crt
+*.csr
+certs/
+
+# --- build scratch / logs ---
+node_modules/
+*.log
