@@ -45,16 +45,24 @@ class Severity(StrEnum):
     @property
     def rank(self) -> int:
         """Return the ordinal used for comparisons and thresholds."""
-        return _SEVERITY_RANK[self]
+        return _SEVERITY_ORDER.index(self)
+
+    def escalated(self) -> Severity:
+        """Return the next-higher severity, capped at :attr:`CRITICAL`.
+
+        Used when an incident keeps repeating: a burst that was merely ``medium``
+        becomes ``high`` once the volume shows the attack is sustained.
+        """
+        return _SEVERITY_ORDER[min(self.rank + 1, len(_SEVERITY_ORDER) - 1)]
 
 
-_SEVERITY_RANK: dict[Severity, int] = {
-    Severity.INFO: 0,
-    Severity.LOW: 1,
-    Severity.MEDIUM: 2,
-    Severity.HIGH: 3,
-    Severity.CRITICAL: 4,
-}
+_SEVERITY_ORDER: tuple[Severity, ...] = (
+    Severity.INFO,
+    Severity.LOW,
+    Severity.MEDIUM,
+    Severity.HIGH,
+    Severity.CRITICAL,
+)
 
 
 class Event(BaseModel):

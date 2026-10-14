@@ -57,7 +57,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M | Goal | Status | Proof |
 |---|---|---|---|
 | M1 | Walking skeleton (uv, FastAPI, SQLite, fake detector, dashboard) | [x] | `uv run pytest tests/test_skeleton.py -q` → **3 passed**; ruff/pyright clean; live server smoke-tested |
-| M2 | Event pipeline (dedup/cooldown/rate-limit/aggregate/global cap) | [ ] | |
+| M2 | Event pipeline (dedup/cooldown/rate-limit/aggregate/global cap) | [x] | `uv run pytest tests/test_pipeline.py -q` → **10 passed**; 10 000-event burst → 1 alert; ruff/pyright clean |
 | M3 | ARP spoofing detector (#1) | [ ] | |
 | M4 | DNS spoofing detector (#2) | [ ] | |
 | M5 | DHCP detector (#3) | [ ] | |
@@ -125,6 +125,43 @@ event count  = 1
 
 Also resolved: `host = "0.0.0.0"` trips ruff `S104`; kept with an inline explanation of why
 it is safe (bridge members hold no IP addresses) rather than muting it silently.
+
+### M2 — event pipeline (2026-10-14)
+
+`src/gilgamesh/pipeline.py`. Five bounded stages in order, with an injected clock so the
+time-based behaviour is tested deterministically rather than with sleeps. The pipeline is
+pure — it returns a `PipelineResult` and never touches the database, so a storage failure
+can never be mistaken for a detection result.
+
+```text
+$ uv run pytest tests/test_pipeline.py -q
+..........                                                               [100%]
+10 passed in 0.14s
+
+$ uv run pytest
+.............                                                            [100%]
+13 passed in 0.35s
+
+$ uv run ruff check .            → All checks passed!
+$ uv run ruff format --check .   → 16 files already formatted
+$ uv run pyright                 → 0 errors, 0 warnings, 0 informations
+```
+
+Each stage has its own test, plus the two properties that matter most:
+
+| Test | Asserts |
+|---|---|
+| `test_identical_event_inside_dedup_window_is_deduplicated` | repeat inside 5 s → `DEDUPED` |
+| `test_same_attack_after_dedup_window_is_cooled_down` | repeat at 10 s → `COOLDOWNED` |
+| `test_per_key_rate_limit_applies` | 3rd event in 60 s → `RATE_LIMITED` |
+| `test_global_limiter_caps_alerts_across_keys` | ceiling honoured across *distinct* keys |
+| `test_repeats_aggregate_into_the_same_incident` | same incident id, `count == 2` |
+| `test_incident_escalates_once_the_threshold_is_reached` | `escalate_at` → re-announce at `CRITICAL` |
+| `test_tracked_keys_are_bounded` | 200 distinct keys → `tracked_key_count <= 10` |
+| `test_ten_thousand_event_burst_yields_bounded_alerts` | **10 000 events → 1 alert** |
+
+pyright strict also caught `field(default_factory=deque)` inferring `deque[Unknown]`;
+fixed by `default_factory=lambda: deque[float]()`.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
