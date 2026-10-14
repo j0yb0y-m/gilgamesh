@@ -62,7 +62,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M4 | DNS spoofing detector (#2) | [x] | `uv run pytest tests/test_dns.py -q` → **15 passed**; forged id, untrusted resolver, conflicting answers detected; CDN/round-robin/TTL-rewrite silent; ruff/pyright clean |
 | M5 | DHCP detector (#3) | [x] | `uv run pytest tests/test_dhcp.py -q` → **15 passed**; rogue server, config drift, starvation detected; mesh/boot-storm/renewal silent; ruff/pyright clean |
 | M6 | Scan + SYN-flood detector (#4) | [x] | `uv run pytest tests/test_scan_flood.py -q` → **13 passed**; vertical/horizontal scan + SYN flood detected; 25 completed handshakes and bulk downloads silent; ruff/pyright clean |
-| M7 | Device inventory (#5) | [ ] | |
+| M7 | Device inventory (#5) | [x] | `uv run pytest tests/test_inventory.py -q` → **11 passed**; new device info/low, randomised MACs downgraded to info, learning period absorbs the boot storm; ruff/pyright clean |
 | M8 | Capture abstraction + sensor runner + PCAP replay | [ ] | |
 | M9 | Suricata integration (#6) | [ ] | |
 | M10 | Notifiers (Discord/Telegram/email) | [ ] | |
@@ -320,6 +320,45 @@ Bug caught by the tests: `_prune` deleted from `_destination_syns` while iterati
 
 Known limits are in the module docstring — NAT dilutes per-source counts, and a
 knocking/service-discovery tool that completes handshakes is not distinguishable.
+
+### M7 — device inventory (2026-10-14)
+
+`src/gilgamesh/sensors/inventory.py`. First-sighting `new_device` event plus the
+inventory the Devices page and allowlists read from.
+
+```text
+$ uv run pytest tests/test_inventory.py -q
+...........                                                            [100%]
+11 passed in 0.25s
+$ uv run pytest → 81 passed · ruff → All checks passed! · pyright → 0 errors
+```
+
+**MAC randomisation is the whole false-positive problem here.** The I/G-adjacent
+*locally administered* bit (low bit of the first octet, IEEE 802) marks a per-network
+randomised address, so such devices are reported `INFO` and labelled *"likely randomised
+device"* rather than `LOW` *"unknown device"*. Trusted devices never alert; the learning
+period absorbs the storm when the bridge comes up; the inventory is an LRU bounded by
+`max_devices` so a spoofed source sweep cannot exhaust memory (both bounds tested).
+
+**Two bugs found while writing the tests — both worth remembering:**
+
+1. *Operator precedence in my own test helper.* `Ether(...)/IP(...)/b"\x00" * 20` parses as
+   `(Ether(...)/IP(...)/b"\x00") * 20` — `/` and `*` have equal precedence and associate
+   left to right — which silently produces a **list of twenty packets**. The detector
+   correctly rejected the list, so the failure pointed at the detector before the real
+   cause was found. Parenthesised now, with a comment.
+2. *`aa:`-prefixed test MACs were not globally unique.* `0xAA & 0x02` is set, so every
+   `aa:bb:cc:…` address was being classified as randomised. Test constants now use a
+   first octet with bits 0 and 1 clear (`00:…`), with the randomised case (`8a:…`) kept
+   deliberately.
+
+**One real product gap closed:** a device's address was only learned from IP headers, but
+an ARP announcement has no IP header — it is very often the only place a device states
+its address. `observe_device` now reads ARP `psrc` as a fallback (ignoring the
+`0.0.0.0` of an ARP probe).
+
+Learning-period semantics were also corrected mid-milestone: devices seen during learning
+are absorbed permanently and are never retroactively reported as "new".
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
