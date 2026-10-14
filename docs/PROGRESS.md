@@ -66,7 +66,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M8 | Capture abstraction + sensor runner + PCAP replay | [x] | `uv run pytest tests/test_pcap_replay.py -q` → **15 passed**; a recorded ARP-spoof pcap produces a stored alert on a plain dev machine (C10 satisfied); ruff/pyright clean |
 | M9 | Suricata integration (#6) | [x] | `uv run pytest tests/test_suricata_ingest.py -q` → **24 passed**; EVE alert → event; rule filters rendered without `#`; ruff/pyright clean |
 | M10 | Notifiers (Discord/Telegram/email) | [x] | `uv run pytest tests/test_notifiers.py -q` → **28 passed**; all three channels built, retries/backoff, quiet hours, redaction, bounded queue; no network in tests; ruff/pyright clean |
-| M11 | Rules & allowlist UI | [ ] | *(next)* |
+| M11 | Rules & allowlist UI | [x] | `uv run pytest tests/test_rules.py tests/test_rules_ui.py -q` → **51 passed**; typed bounded params, exact-match allowlist, CSRF on every mutation; verified over real HTTP; ruff/pyright clean |
 | M12 | Auth + first-run wizard | [x] | `uv run pytest tests/test_auth.py -q` → **40 passed**; Argon2id, revocable sessions, CSRF, lockout; verified over real HTTP; **built before M11 per D-028** |
 | M13 | UI completion (dashboard SSE, alerts, devices, health, settings) | [ ] | |
 | M14 | Hardening + install.sh + systemd + docs | [ ] | |
@@ -558,6 +558,44 @@ refuses anything that is not URL-encoded. Verified working.
    from `created_ts`/`last_seen_ts`.
 4. The M1 skeleton tests broke because `/` now requires a session — correct behaviour, so
    those tests were updated to complete the wizard first.
+
+### M11 — detection rules and allowlist (2026-10-14)
+
+`src/gilgamesh/rules.py`, two templates, six routes. 12 built-in rules covering every MVP
+detector, plus exact-match allowlists.
+
+```text
+$ uv run pytest tests/test_rules.py tests/test_rules_ui.py -q
+...................................................                      [100%]
+51 passed
+$ uv run pytest → 240 passed · ruff → All checks passed! · pyright → 0 errors
+```
+
+Live smoke test (curl against a running server):
+
+```text
+disable a rule         → "scan.vertical disabled."
+threshold 99999        → "Not saved: port_threshold must be at most 200, got 99999"
+allowlist DE-AD-BE-…   → added, stored normalised as "de:ad:be:ef:00:01"
+POST without CSRF      → 403
+```
+
+**D-017 held in practice.** No user regex and no free-text rules, and the module docstring
+says why: Python's `re` has no timeout, so a user-supplied pattern is a remote-triggerable
+CPU exhaustion on a box whose only job is to stay up. Parameters are typed and bounded
+(`int`, `float`, `bool`, `enum` with fixed choices), and allowlist entries match on exact
+normalised values — MACs canonicalised, IPs parsed with `ipaddress` — so `.*` is stored as
+the four literal characters and matches nothing.
+
+Properties tested rather than assumed: a rejected value leaves the stored state untouched
+(partial form saves are impossible), unknown rule ids and unknown parameters are refused
+rather than ignored, a suppression is scoped to its rule *and* its source, and a bogus
+match field (`regex`) is rejected instead of accepted as free text.
+
+Also fixed while wiring: `Database.execute` returned an `int`, so `remove_suppression`
+could not see `rowcount` and could not tell a deleted row from a missing one — it now
+returns the cursor. Rules survive a restart because the database is the source of truth
+(D-005), which has its own test.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green

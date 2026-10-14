@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,31 @@ class Database:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+
+    # --- generic statements -------------------------------------------------
+
+    def execute(self, sql: str, params: Sequence[object] = ()) -> sqlite3.Cursor:
+        """Run one statement and return its cursor.
+
+        Callers read ``lastrowid`` for inserts or ``rowcount`` for updates/deletes.
+        All SQL in Gilgamesh is a literal string with bound parameters — never built by
+        concatenating user input.
+        """
+        conn = self._connect()
+        with self._lock:
+            return conn.execute(sql, tuple(params))
+
+    def query(self, sql: str, params: Sequence[object] = ()) -> list[sqlite3.Row]:
+        """Run a query and return all rows."""
+        conn = self._connect()
+        with self._lock:
+            return list(conn.execute(sql, tuple(params)).fetchall())
+
+    def executescript(self, script: str) -> None:
+        """Run a multi-statement script such as a schema definition."""
+        conn = self._connect()
+        with self._lock:
+            conn.executescript(script)
 
     # --- users ---------------------------------------------------------------
 

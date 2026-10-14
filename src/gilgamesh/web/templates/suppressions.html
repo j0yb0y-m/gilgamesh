@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Allowlist — Gilgamesh{% endblock %}
+
+{% block content %}
+<section id="suppressions">
+  <h2>Allowlist</h2>
+  <p>
+    Ignore events from a source you already know about. Entries match exactly — there
+    are no patterns, so an entry can never accidentally silence more than you intended.
+  </p>
+
+  {% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+  {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+
+  <form method="post" action="/suppressions">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+
+    <label for="rule_id">Rule</label>
+    <select id="rule_id" name="rule_id" required>
+      {% for definition in catalogue.definitions() %}
+        <option value="{{ definition.id }}">{{ definition.name }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="field">Match on</label>
+    <select id="field" name="field" required>
+      <option value="src_mac">Source MAC address</option>
+      <option value="src_ip">Source IP address</option>
+      <option value="dst_ip">Destination IP address</option>
+      <option value="detector">Detector name</option>
+      <option value="any">Anything from this rule</option>
+    </select>
+
+    <label for="value">Value</label>
+    <input id="value" name="value" type="text" required placeholder="de:ad:be:ef:00:01" />
+
+    <label for="note">Note (optional)</label>
+    <input id="note" name="note" type="text" placeholder="Living-room TV" />
+
+    <button type="submit">Add to allowlist</button>
+  </form>
+
+  {% if suppressions %}
+    <table>
+      <thead>
+        <tr>
+          <th>Rule</th>
+          <th>Match</th>
+          <th>Value</th>
+          <th>Note</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for suppression in suppressions %}
+          <tr>
+            <td>{{ suppression.rule_id }}</td>
+            <td>{{ suppression.field }}</td>
+            <td><code>{{ suppression.value }}</code></td>
+            <td>{{ suppression.note }}</td>
+            <td>
+              <form method="post" action="/suppressions/delete">
+                <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+                <input type="hidden" name="id" value="{{ suppression.id }}" />
+                <button type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No allowlist entries yet.</p>
+  {% endif %}
+
+  <p><a href="/rules">Back to detection rules</a></p>
+</section>
+{% endblock %}
