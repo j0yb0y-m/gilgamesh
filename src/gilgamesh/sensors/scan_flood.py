@@ -54,7 +54,7 @@ from scapy.layers.inet import IP, TCP
 from scapy.packet import Packet
 
 from gilgamesh.models import Event, EventType, Severity
-from gilgamesh.sensors.base import Detector
+from gilgamesh.sensors.base import PacketDetector
 
 _FIN = 0x01
 _SYN = 0x02
@@ -135,7 +135,7 @@ class _SourceState:
     syns: deque[float] = field(default_factory=lambda: deque[float]())
 
 
-class ScanDetector(Detector):
+class ScanDetector(PacketDetector):
     """Detects vertical/horizontal port scans and SYN floods."""
 
     name = "scan_flood"

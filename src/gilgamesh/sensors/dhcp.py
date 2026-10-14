@@ -57,7 +57,7 @@ from scapy.layers.inet import UDP
 from scapy.packet import Packet
 
 from gilgamesh.models import Event, EventType, Severity
-from gilgamesh.sensors.base import Detector
+from gilgamesh.sensors.base import PacketDetector
 from gilgamesh.util.net import normalize_mac
 
 DHCP_SERVER_PORT = 67
@@ -177,7 +177,7 @@ def parse_dhcp(packet: object) -> DhcpFrame | None:
     )
 
 
-class DhcpDetector(Detector):
+class DhcpDetector(PacketDetector):
     """Detects rogue DHCP servers, configuration drift, and starvation."""
 
     name = "dhcp"

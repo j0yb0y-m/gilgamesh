@@ -24,3 +24,20 @@ class Detector(ABC):
 
         Returns an empty list when nothing was detected.
         """
+
+
+class PacketDetector(Detector):
+    """A detector driven by captured packets.
+
+    Separated from :class:`Detector` because the sensor runner can only feed something
+    that consumes packets, and typing it explicitly keeps that contract honest rather
+    than relying on a duck-typed attribute that may not exist.
+    """
+
+    @abstractmethod
+    def process(self, packet: object) -> list[Event]:
+        """Inspect one captured packet and return the events it triggered.
+
+        Must never raise for ordinary malformed traffic; return an empty list instead.
+        Returns an empty list when nothing was detected.
+        """

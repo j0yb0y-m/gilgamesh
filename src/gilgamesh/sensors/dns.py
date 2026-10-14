@@ -63,7 +63,7 @@ from scapy.layers.inet import IP, UDP
 from scapy.packet import Packet
 
 from gilgamesh.models import Event, EventType, Severity
-from gilgamesh.sensors.base import Detector
+from gilgamesh.sensors.base import PacketDetector
 
 DNS_PORT = 53
 DNS_RESPONSE = 1
@@ -183,7 +183,7 @@ def parse_dns(packet: object) -> DnsFrame | None:
     )
 
 
-class DnsDetector(Detector):
+class DnsDetector(PacketDetector):
     """Detects DNS spoofing by correlating queries with their responses."""
 
     name = "dns"

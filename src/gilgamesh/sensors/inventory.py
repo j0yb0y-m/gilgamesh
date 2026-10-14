@@ -48,7 +48,7 @@ from scapy.layers.l2 import ARP, Ether
 from scapy.packet import Packet
 
 from gilgamesh.models import Event, EventType, Severity
-from gilgamesh.sensors.base import Detector
+from gilgamesh.sensors.base import PacketDetector
 from gilgamesh.util.net import IPV4_ZERO, normalize_mac
 
 #: I/G (individual/group) bit of the first octet. Set = locally administered, i.e. a
@@ -161,7 +161,7 @@ def observe_device(packet: object) -> ObservedDevice | None:
     return ObservedDevice(mac=mac, ip=ip, hostname=hostname)
 
 
-class InventoryDetector(Detector):
+class InventoryDetector(PacketDetector):
     """Tracks devices and reports the first sighting of each one."""
 
     name = "inventory"

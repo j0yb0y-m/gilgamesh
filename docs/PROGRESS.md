@@ -63,7 +63,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M5 | DHCP detector (#3) | [x] | `uv run pytest tests/test_dhcp.py -q` → **15 passed**; rogue server, config drift, starvation detected; mesh/boot-storm/renewal silent; ruff/pyright clean |
 | M6 | Scan + SYN-flood detector (#4) | [x] | `uv run pytest tests/test_scan_flood.py -q` → **13 passed**; vertical/horizontal scan + SYN flood detected; 25 completed handshakes and bulk downloads silent; ruff/pyright clean |
 | M7 | Device inventory (#5) | [x] | `uv run pytest tests/test_inventory.py -q` → **11 passed**; new device info/low, randomised MACs downgraded to info, learning period absorbs the boot storm; ruff/pyright clean |
-| M8 | Capture abstraction + sensor runner + PCAP replay | [ ] | |
+| M8 | Capture abstraction + sensor runner + PCAP replay | [x] | `uv run pytest tests/test_pcap_replay.py -q` → **15 passed**; a recorded ARP-spoof pcap produces a stored alert on a plain dev machine (C10 satisfied); ruff/pyright clean |
 | M9 | Suricata integration (#6) | [ ] | |
 | M10 | Notifiers (Discord/Telegram/email) | [ ] | |
 | M11 | Rules & allowlist UI | [ ] | |
@@ -359,6 +359,49 @@ its address. `observe_device` now reads ARP `psrc` as a fallback (ignoring the
 
 Learning-period semantics were also corrected mid-milestone: devices seen during learning
 are absorbed permanently and are never retroactively reported as "new".
+
+### M8 — capture abstraction, runner, PCAP replay (2026-10-14)
+
+`sensors/capture.py`, `sensors/runner.py`, `sensors/base.py`. This milestone is what
+makes **C10** true: the entire detection stack is exercised on an ordinary Linux box.
+
+```text
+$ uv run pytest tests/test_pcap_replay.py -q
+...............                                                          [100%]
+15 passed in 0.40s
+$ uv run pytest → 96 passed · ruff → All checks passed! · pyright → 0 errors
+```
+
+`PacketSource` is the abstraction (C8): `PcapSource` replays a file, `LiveSource` wraps
+Scapy's `AsyncSniffer` in its own thread with `store=False` and a default BPF
+(`arp or (udp port 53) or (udp port 67 or 68) or icmp or icmp6`) that drops payload
+traffic in the kernel. The runner cannot tell which one it has. `SensorRunner` fans each
+packet out to every detector in isolation, pushes results through the pipeline, and
+stores only what survives.
+
+Proven end to end:
+
+* a recorded ARP-spoof pcap → **exactly one** `gateway_mac_changed` alert in SQLite;
+* the legitimate reply in the same capture produces **no** alert;
+* 200 copies of the poisoning packet collapse to **one** stored event;
+* a benign 61-packet capture → **zero** alerts (the false-positive check from the plan);
+* a detector that raises on every packet is logged, skipped, and the others continue;
+* a corrupt pcap raises `OSError`; a *missing* one yields nothing.
+
+**Bugs found and fixed here:**
+
+1. *Scapy leaks a file descriptor on a corrupt capture.* `PcapReader` opens the file in
+   its constructor and leaves it open when header parsing throws. `iter_pcap` now checks
+   the 4-byte pcap magic first, which both prevents the leak and gives a better message.
+2. *The runner never stamped `interface` on events.* Only the detector's own config could
+   set it, and the detector does not know where the packet came from. The runner now
+   stamps it, since it is the only component that does.
+3. *`Detector` did not declare `process`*, so the runner called a duck-typed attribute.
+   Added an explicit `PacketDetector` subclass that declares the capture contract, and
+   all five real detectors now implement it.
+4. *My dedup test asserted the wrong thing*: the first ARP seen for the gateway
+   legitimately *teaches* its MAC, so a capture of only spoofed packets yields no alert.
+   The fixture now includes the honest exchange first — which is also the realistic case.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green

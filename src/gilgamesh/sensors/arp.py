@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from scapy.layers.l2 import ARP, Ether
 
 from gilgamesh.models import Event, EventType, Severity
-from gilgamesh.sensors.base import Detector
+from gilgamesh.sensors.base import PacketDetector
 from gilgamesh.util.net import IPV4_ZERO, MAC_ZERO, normalize_mac
 
 ARP_REQUEST = 1
@@ -132,7 +132,7 @@ def parse_arp(packet: object) -> ArpPacket | None:
         return None
 
 
-class ArpDetector(Detector):
+class ArpDetector(PacketDetector):
     """Detects ARP poisoning by correlating ARP frames against learned bindings."""
 
     name = "arp"
