@@ -61,7 +61,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M3 | ARP spoofing detector (#1) | [x] | `uv run pytest tests/test_arp.py -q` → **14 passed**; gateway-MAC-change alerts, benign re-announcement silent; ruff/pyright clean |
 | M4 | DNS spoofing detector (#2) | [x] | `uv run pytest tests/test_dns.py -q` → **15 passed**; forged id, untrusted resolver, conflicting answers detected; CDN/round-robin/TTL-rewrite silent; ruff/pyright clean |
 | M5 | DHCP detector (#3) | [x] | `uv run pytest tests/test_dhcp.py -q` → **15 passed**; rogue server, config drift, starvation detected; mesh/boot-storm/renewal silent; ruff/pyright clean |
-| M6 | Scan + SYN-flood detector (#4) | [ ] | |
+| M6 | Scan + SYN-flood detector (#4) | [x] | `uv run pytest tests/test_scan_flood.py -q` → **13 passed**; vertical/horizontal scan + SYN flood detected; 25 completed handshakes and bulk downloads silent; ruff/pyright clean |
 | M7 | Device inventory (#5) | [ ] | |
 | M8 | Capture abstraction + sensor runner + PCAP replay | [ ] | |
 | M9 | Suricata integration (#6) | [ ] | |
@@ -290,6 +290,36 @@ baseline and only for options the message actually carries; the DISCOVER-flood w
 expires so a burst is not remembered forever.
 
 Out of scope for v1 (D-026): DHCPv6 (546/547), relays, IPv6 RA.
+
+### M6 — scan / SYN-flood detector (2026-10-14)
+
+`src/gilgamesh/sensors/scan_flood.py`. `vertical_port_scan`, `horizontal_port_scan`,
+`syn_flood`.
+
+```text
+$ uv run pytest tests/test_scan_flood.py -q
+.............                                                            [100%]
+13 passed in 0.36s
+$ uv run pytest → 70 passed · ruff → All checks passed! · pyright → 0 errors
+```
+
+**The key false-positive guard: a completed handshake exonerates the port.** The internet
+scans a home connection constantly, so alerting per-probe is useless. What separates a
+scanner from a busy application is that a scanner's probes *do not complete*. Once a
+SYN-ACK is seen for `(source, host, port)` that combination is dropped from the scan
+counters. `test_completed_connections_are_not_a_scan` opens 25 ports in sequence with
+full handshakes and asserts total silence — each handshake completes before the next SYN
+arrives, so the never-established count never climbs.
+
+Also proven silent: 200 data packets of a bulk download (volume alone is never a scan);
+8 ordinary browsing sessions; alerts expiring with the window; and remembered
+handshakes expiring so a port can be re-probed later.
+
+Bug caught by the tests: `_prune` deleted from `_destination_syns` while iterating it
+(`RuntimeError: dictionary changed size during iteration`).
+
+Known limits are in the module docstring — NAT dilutes per-source counts, and a
+knocking/service-discovery tool that completes handshakes is not distinguishable.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
