@@ -60,7 +60,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M2 | Event pipeline (dedup/cooldown/rate-limit/aggregate/global cap) | [x] | `uv run pytest tests/test_pipeline.py -q` → **10 passed**; 10 000-event burst → 1 alert; ruff/pyright clean |
 | M3 | ARP spoofing detector (#1) | [x] | `uv run pytest tests/test_arp.py -q` → **14 passed**; gateway-MAC-change alerts, benign re-announcement silent; ruff/pyright clean |
 | M4 | DNS spoofing detector (#2) | [x] | `uv run pytest tests/test_dns.py -q` → **15 passed**; forged id, untrusted resolver, conflicting answers detected; CDN/round-robin/TTL-rewrite silent; ruff/pyright clean |
-| M5 | DHCP detector (#3) | [ ] | |
+| M5 | DHCP detector (#3) | [x] | `uv run pytest tests/test_dhcp.py -q` → **15 passed**; rogue server, config drift, starvation detected; mesh/boot-storm/renewal silent; ruff/pyright clean |
 | M6 | Scan + SYN-flood detector (#4) | [ ] | |
 | M7 | Device inventory (#5) | [ ] | |
 | M8 | Capture abstraction + sensor runner + PCAP replay | [ ] | |
@@ -248,6 +248,48 @@ is called untrusted. Round-robin below threshold is silent; three disjoint sets 
 Known limits are documented in the module docstring: **DoH/DoT is invisible** (it never
 appears on port 53), and a name genuinely served round-robin from one resolver will
 report `conflicting_answers` — owners should raise `conflict_threshold`.
+
+### M5 — DHCP detector (2026-10-14)
+
+`src/gilgamesh/sensors/dhcp.py`. Three detections: `rogue_dhcp_server`,
+`dhcp_config_drift`, `dhcp_starvation`.
+
+```text
+$ uv run pytest tests/test_dhcp.py -q
+...............                                                          [100%]
+15 passed in 0.28s
+
+$ uv run pytest            → 57 passed
+$ uv run ruff check .      → All checks passed!
+$ uv run ruff format --check . → 24 files already formatted
+$ uv run pyright           → 0 errors, 0 warnings, 0 informations
+```
+
+**Scapy 2.8.0 DHCP facts verified against the installed package:** options are a list of
+`(name, value)` tuples (`'message-type'`, `'server_id'`, `'router'`, `'name_server'`, …);
+there is **no** `.message_type` attribute; `BOOTP.chaddr` is **bytes**
+(`b'aa:bb:cc:00:00:02'`), so it must be decoded before `normalize_mac`.
+
+**A real design flaw the tests caught.** The first version tracked competing servers in a
+time window and only reported a rogue once *N distinct servers* had been seen inside it.
+That let the attacker's own packet authorise itself: a second server was recorded but,
+being the only one in the window, got *learned as trusted*. Replaced with a two-state
+rule that needs no window at all:
+
+* nothing trusted yet → the first server to answer is **learned**;
+* something trusted already → a different server answering is a **rogue**.
+
+This covers both the configured-allowlist case (pre-seeded, so any other server is
+immediately rogue) and the learning case. `test_rogue_server_is_not_learned_as_trusted`
+locks the property in. `test_warmup_learns_without_alerting` also proves warm-up can no
+longer mask an attack forever.
+
+FP guards: 10 clients booting at once is silent; repeated ACKs from the trusted server
+with the same gateway/resolvers are silent; drift is judged only against a learned
+baseline and only for options the message actually carries; the DISCOVER-flood window
+expires so a burst is not remembered forever.
+
+Out of scope for v1 (D-026): DHCPv6 (546/547), relays, IPv6 RA.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
