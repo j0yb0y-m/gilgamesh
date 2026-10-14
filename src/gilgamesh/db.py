@@ -53,6 +53,31 @@ CREATE INDEX IF NOT EXISTS idx_events_ts          ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_type_ts     ON events(type, ts);
 CREATE INDEX IF NOT EXISTS idx_events_severity_ts ON events(severity, ts);
 CREATE INDEX IF NOT EXISTS idx_events_dedup_key   ON events(dedup_key);
+
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_ts    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    sid          TEXT PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    csrf_token   TEXT NOT NULL,
+    created_ts   REAL NOT NULL,
+    last_seen_ts REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+    key    TEXT NOT NULL,
+    ts     REAL NOT NULL,
+    success INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_attempts_key_ts ON login_attempts(key, ts);
 """
 
 
@@ -132,6 +157,121 @@ class Database:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+
+    # --- users ---------------------------------------------------------------
+
+    def count_users(self) -> int:
+        """Number of accounts. Zero means the install still needs its first-run setup."""
+        conn = self._connect()
+        with self._lock:
+            row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+        return int(row["n"])
+
+    def create_user(self, username: str, password_hash: str, created_ts: float) -> int:
+        """Insert an account and return its id."""
+        conn = self._connect()
+        with self._lock:
+            cursor = conn.execute(
+                "INSERT INTO users (username, password_hash, created_ts) VALUES (?, ?, ?)",
+                (username, password_hash, str(created_ts)),
+            )
+        return int(cursor.lastrowid or 0)
+
+    def get_user(self, username: str) -> tuple[int, str] | None:
+        """Return ``(id, password_hash)`` for ``username``, or ``None``."""
+        conn = self._connect()
+        with self._lock:
+            row = conn.execute(
+                "SELECT id, password_hash FROM users WHERE username = ?", (username,)
+            ).fetchone()
+        return (int(row["id"]), str(row["password_hash"])) if row is not None else None
+
+    # --- sessions ------------------------------------------------------------
+
+    def insert_session(
+        self,
+        sid: str,
+        user_id: int,
+        csrf_token: str,
+        created_ts: float,
+    ) -> None:
+        """Store a new session."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute(
+                """
+                INSERT INTO sessions (sid, user_id, csrf_token, created_ts, last_seen_ts)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (sid, user_id, csrf_token, created_ts, created_ts),
+            )
+
+    def get_session(self, sid: str) -> tuple[int, str, float, float] | None:
+        """Return ``(user_id, csrf_token, created_ts, last_seen_ts)``."""
+        conn = self._connect()
+        with self._lock:
+            row = conn.execute(
+                "SELECT user_id, csrf_token, created_ts, last_seen_ts FROM sessions WHERE sid = ?",
+                (sid,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (
+            int(row["user_id"]),
+            str(row["csrf_token"]),
+            float(row["created_ts"]),
+            float(row["last_seen_ts"]),
+        )
+
+    def touch_session(self, sid: str, seen_ts: float) -> None:
+        """Record activity on a session so the idle timeout slides."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute("UPDATE sessions SET last_seen_ts = ? WHERE sid = ?", (seen_ts, sid))
+
+    def backdate_session(self, sid: str, last_seen_ts: float, created_ts: float) -> None:
+        """Move a session's timestamps backwards, to age it out."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute(
+                "UPDATE sessions SET last_seen_ts = ?, created_ts = ? WHERE sid = ?",
+                (last_seen_ts, created_ts, sid),
+            )
+
+    def delete_session(self, sid: str) -> None:
+        """Revoke a session immediately."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
+
+    def get_username(self, user_id: int) -> str | None:
+        """Return the username for a user id."""
+        conn = self._connect()
+        with self._lock:
+            row = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        return str(row["username"]) if row is not None else None
+
+    # --- login throttling ----------------------------------------------------
+
+    def record_login_attempt(self, key: str, ts: float, success: bool) -> None:
+        """Record a login outcome for lockout accounting."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute(
+                "INSERT INTO login_attempts (key, ts, success) VALUES (?, ?, ?)",
+                (key, ts, 1 if success else 0),
+            )
+
+    def failed_attempts_since(self, key: str, since: float) -> int:
+        """Count failed logins for ``key`` since ``since``."""
+        conn = self._connect()
+        with self._lock:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM login_attempts "
+                "WHERE key = ? AND ts >= ? AND success = 0",
+                (key, since),
+            ).fetchone()
+        return int(row["n"])
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:

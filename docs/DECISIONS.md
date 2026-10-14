@@ -167,6 +167,62 @@ Status values: `LOCKED` (approved/final for Phase 1) · `PROVISIONAL` (best gues
 
 ---
 
+## D-028 — Auth is built *before* any configuration UI (deviation from the prompt's order)
+
+- **Decision:** Swap the order of M11 and M12: implement **auth + first-run wizard first**,
+  then the rules/allowlist UI, then the remaining pages. The prompt prescribed
+  "rules/allowlist UI, then auth + setup wizard"; that order is inverted here.
+- **Reason:** Every configuration route mutates security-relevant state (which detectors
+  run, which alerts are suppressed). Building them before auth means committing a window in
+  which **anyone on the LAN can silently disable detection** or mute alerts. That is a real
+  security regression, not just untidy sequencing, and it would exist in the git history.
+  Auth is a prerequisite, not a sibling.
+- **Alternative rejected:** following the prompt literally and retro-fitting auth
+  afterwards; or adding a temporary "auth stub" gate (a stub is banned by the project's own
+  no-placeholder rule and would be thrown away anyway).
+- **Status:** LOCKED. **Evidence:** `docs/PLAN.md` §11 milestone table, reordered.
+
+## D-029 — Session cookie is a random opaque token, not a signed payload
+
+- **Decision:** The session cookie carries a 256-bit random opaque id (`secrets.token_urlsafe`)
+  and nothing else. The server-side `sessions` row is the only source of truth. `itsdangerous`
+  / Starlette `SessionMiddleware` is **not** used.
+- **Reason:** A signed cookie only needs signing to stop the *client* editing its own
+  contents. Here the contents are a single unguessable random token, so signing protects
+  nothing and adds a dependency plus a serialisation format that could leak session data
+  into the cookie if the shape ever changes. It also lets `HttpOnly`, `SameSite`, and
+  `Secure` be set on one value we fully control.
+- **Alternative rejected:** `SessionMiddleware` carrying `{"sid": ...}` (D-014's original
+  sketch) — strictly more machinery for identical security.
+- **Status:** LOCKED. **Evidence:** OWASP Session Management Cheat Sheet (opaque
+  identifiers are the recommended primary key type); supersedes the D-014 implementation detail.
+
+## D-030 — Forms are parsed with the stdlib; FastAPI `Form()` and `request.form()` are unusable
+
+- **Decision:** Gilgamesh parses `application/x-www-form-urlencoded` bodies itself with
+  `urllib.parse.parse_qs` and **never** uses FastAPI's `Annotated[..., Form()]` or
+  Starlette's `request.form()`. `python-multipart` stays out of the dependency tree,
+  preserving D-020.
+- **Reason (verified on the installed versions, 2026-10-14):**
+  * FastAPI's form dependency raises unconditionally —
+    `fastapi/dependencies/utils.py:129`: *"Form data requires `python-multipart` to be
+    installed"*.
+  * Starlette is no better: `starlette/requests.py:278` asserts
+    `parse_options_header is not None` for **every** form body, including
+    `application/x-www-form-urlencoded`. Verified by round-tripping a URL-encoded POST
+    through a real ASGI app.
+  * So in Starlette 1.8.0 there is **no** way to read a form without `python-multipart`
+    (`Apache-2.0`), which D-020 deliberately excluded from a `GPL-2.0-only` project.
+- **Alternative rejected:** adding `python-multipart` and re-opening the licence
+  question the user already answered.
+- **Cost:** a few lines of parsing, and the app must never accept `multipart/form-data`.
+  That is fine — Gilgamesh has no file uploads, and HTML forms and htmx both post
+  URL-encoded by default.
+- **Status:** LOCKED. **Evidence:** source of the installed FastAPI 0.143.0 / Starlette
+  1.8.0; behaviour confirmed by an ASGI round-trip test.
+
+---
+
 ## Phase 2 — Clarification batch answers (2026-10-14)
 
 The batch was asked once, after Phase 1. All answers below are `LOCKED` unless noted.

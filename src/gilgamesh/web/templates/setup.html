@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}First-run setup — Gilgamesh{% endblock %}
+
+{% block content %}
+<section id="setup">
+  <h2>Welcome to Gilgamesh</h2>
+  <p>
+    Gilgamesh watches your home network and tells you when something looks wrong.
+    First, create the administrator account. There is only one account in v1 — anyone
+    who can sign in can change how detection works.
+  </p>
+
+  <form method="post" action="/setup">
+    <label for="username">Administrator username</label>
+    <input id="username" name="username" type="text" autocomplete="username" required />
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required />
+    <p class="hint">
+      Use a passphrase of at least 20 characters, or 12 characters mixing lower case,
+      upper case, digits, and symbols. A long sentence is easier to remember and
+      stronger than <code>Passw0rd!</code>.
+    </p>
+
+    <button type="submit">Create account</button>
+  </form>
+</section>
+{% endblock %}

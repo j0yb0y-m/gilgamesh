@@ -66,8 +66,8 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M8 | Capture abstraction + sensor runner + PCAP replay | [x] | `uv run pytest tests/test_pcap_replay.py -q` → **15 passed**; a recorded ARP-spoof pcap produces a stored alert on a plain dev machine (C10 satisfied); ruff/pyright clean |
 | M9 | Suricata integration (#6) | [x] | `uv run pytest tests/test_suricata_ingest.py -q` → **24 passed**; EVE alert → event; rule filters rendered without `#`; ruff/pyright clean |
 | M10 | Notifiers (Discord/Telegram/email) | [x] | `uv run pytest tests/test_notifiers.py -q` → **28 passed**; all three channels built, retries/backoff, quiet hours, redaction, bounded queue; no network in tests; ruff/pyright clean |
-| M11 | Rules & allowlist UI | [ ] | |
-| M12 | Auth + first-run wizard | [ ] | |
+| M11 | Rules & allowlist UI | [ ] | *(next)* |
+| M12 | Auth + first-run wizard | [x] | `uv run pytest tests/test_auth.py -q` → **40 passed**; Argon2id, revocable sessions, CSRF, lockout; verified over real HTTP; **built before M11 per D-028** |
 | M13 | UI completion (dashboard SSE, alerts, devices, health, settings) | [ ] | |
 | M14 | Hardening + install.sh + systemd + docs | [ ] | |
 
@@ -491,6 +491,73 @@ midnight** (22:00→07:00), message truncation to each provider's limit, Telegra
 percent-encoded so a stray `/` cannot move the path segment, Discord `allowed_mentions`
 disabled so a scan never pings a human, and a bounded queue that drops the newest alert
 rather than growing without limit.
+
+### M12 — auth, sessions, CSRF, first-run wizard (2026-10-14)
+
+`web/auth.py`, rewritten `web/app.py`, four new templates. Added `argon2-cffi`.
+
+```text
+$ uv run pytest tests/test_auth.py -q
+........................................                                 [100%]
+40 passed in 5.93s
+$ uv run pytest → 189 passed · ruff → All checks passed! · pyright → 0 errors
+```
+
+Live smoke test over real HTTP (curl against a running server):
+
+```text
+GET  /                 (anonymous)          → 303 → /setup
+POST /setup  password=short                  → 400  (policy enforced)
+POST /setup  password=<long passphrase>      → 303  + Set-Cookie gilgamesh_session
+     cookie flags                              #HttpOnly_ ... SameSite=lax
+GET  /                 (authenticated)       → 200, dashboard shows "hello gilgamesh"
+POST /settings  (no CSRF token)              → 403  ← the point of the test
+POST /logout                                  → session destroyed
+GET  /                 (after logout)        → 303 → /login
+```
+
+**Decisions made, with reasons (D-028, D-029, D-030 in `DECISIONS.md`):**
+
+* **Auth was built before M11, inverting the prompt's order.** Every configuration route
+  mutates security-relevant state, so building them first would mean committing a window
+  where anyone on the LAN can silently disable detection or mute alerts.
+* **Sessions are opaque random tokens**, not a signed cookie — revocability is the whole
+  point, and signing a value that *is* the secret protects nothing.
+* **Argon2id** at `t=3, m=64 MiB, p=4` (D-013), with `check_needs_rehash` available so the
+  cost can be raised later. Password policy accepts a ≥ 20-character passphrase *or* ≥ 12
+  characters across three character classes — rejecting only "short and simple" pushes
+  people towards `Passw0rd!`.
+* **Lockout is tracked per account *and* per client address**, so an attacker cannot lock
+  a household out of its own box, and one NAT address cannot grind an account forever.
+
+**A hard blocker found by verification — `python-multipart` is unavoidable in Starlette
+1.8 (D-030).** D-020 deliberately excluded it (`Apache-2.0` vs `GPL-2.0-only`). Checked
+on the installed versions:
+
+* `fastapi/dependencies/utils.py:129` raises *"Form data requires `python-multipart`"* —
+  unconditionally, for any route declaring `Form()`.
+* `starlette/requests.py:278` asserts `parse_options_header is not None` for **every**
+  form body — **including `application/x-www-form-urlencoded`** (confirmed by an ASGI
+  round-trip).
+
+So there is no way to read a form without it. Rather than re-open the licence question the
+user already answered, Gilgamesh parses the body itself with `urllib.parse.parse_qs` and
+refuses anything that is not URL-encoded. Verified working.
+
+**Four bugs caught while wiring this up:**
+
+1. **Dependencies defined inside `create_app` broke silently.** With
+   `from __future__ import annotations`, FastAPI re-evaluates `Depends(current_session)`
+   in *module* scope; a closure local cannot be resolved, so the dependency degraded into
+   a **query parameter** and every route returned a puzzling `422`. Dependencies now live
+   at module scope, with the reason documented in the module docstring.
+2. **`verify_csrf` never awaited `read_form`** — the coroutine was created and discarded,
+   so form-token CSRF checks were silently broken (a `RuntimeWarning` caught it).
+3. **Redundant `absolute_expiry` column** meant back-dating a session's `created_ts` did
+   nothing, so the absolute timeout was untestable. Validation now derives both limits
+   from `created_ts`/`last_seen_ts`.
+4. The M1 skeleton tests broke because `/` now requires a session — correct behaviour, so
+   those tests were updated to complete the wizard first.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green

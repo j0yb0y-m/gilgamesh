@@ -19,6 +19,17 @@ from gilgamesh.db import Database
 from gilgamesh.models import Event, EventType, Severity
 from gilgamesh.web.app import create_app
 
+#: Long enough to satisfy the password policy in the first-run wizard.
+ADMIN_PASSWORD = "a perfectly long passphrase"
+
+
+def _complete_setup(client: TestClient) -> None:
+    """Run the first-run wizard so the client holds an administrator session."""
+    response = client.post(
+        "/setup", data={"username": "admin", "password": ADMIN_PASSWORD}, follow_redirects=False
+    )
+    assert response.status_code == 303
+
 
 def test_event_roundtrips_through_database(tmp_path: Path) -> None:
     db = Database(tmp_path / "gilgamesh.db")
@@ -46,6 +57,7 @@ def test_fake_detector_event_is_served_by_api(tmp_path: Path) -> None:
     app = create_app(Settings(data_dir=tmp_path))
 
     with TestClient(app) as client:
+        _complete_setup(client)
         response = client.get("/api/events")
 
     assert response.status_code == 200
@@ -59,8 +71,19 @@ def test_dashboard_renders_stored_events(tmp_path: Path) -> None:
     app = create_app(Settings(data_dir=tmp_path))
 
     with TestClient(app) as client:
+        _complete_setup(client)
         response = client.get("/")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "hello gilgamesh" in response.text
+
+
+def test_healthz_needs_no_login(tmp_path: Path) -> None:
+    """The liveness probe must stay reachable without credentials."""
+    app = create_app(Settings(data_dir=tmp_path))
+
+    with TestClient(app) as client:
+        response = client.get("/api/healthz")
+
+    assert response.status_code == 200

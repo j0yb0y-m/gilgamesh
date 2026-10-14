@@ -5,11 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Gilgamesh{% endblock %}</title>
   </head>
-  <body>
+  <body hx-headers='{"X-CSRF-Token": "{{ session.csrf_token if session else "" }}"}'>
     <header>
       <h1>Gilgamesh</h1>
+      {% if session %}
+        <nav>
+          <a href="/">Dashboard</a>
+          <a href="/settings">Settings</a>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+            <button type="submit">Sign out</button>
+          </form>
+        </nav>
+      {% endif %}
     </header>
     <main>
+      {% if error %}<p role="alert" class="error">{{ error }}</p>{% endif %}
       {% block content %}{% endblock %}
     </main>
   </body>
