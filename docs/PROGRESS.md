@@ -64,7 +64,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M6 | Scan + SYN-flood detector (#4) | [x] | `uv run pytest tests/test_scan_flood.py -q` → **13 passed**; vertical/horizontal scan + SYN flood detected; 25 completed handshakes and bulk downloads silent; ruff/pyright clean |
 | M7 | Device inventory (#5) | [x] | `uv run pytest tests/test_inventory.py -q` → **11 passed**; new device info/low, randomised MACs downgraded to info, learning period absorbs the boot storm; ruff/pyright clean |
 | M8 | Capture abstraction + sensor runner + PCAP replay | [x] | `uv run pytest tests/test_pcap_replay.py -q` → **15 passed**; a recorded ARP-spoof pcap produces a stored alert on a plain dev machine (C10 satisfied); ruff/pyright clean |
-| M9 | Suricata integration (#6) | [ ] | |
+| M9 | Suricata integration (#6) | [x] | `uv run pytest tests/test_suricata_ingest.py -q` → **24 passed**; EVE alert → event; rule filters rendered without `#`; ruff/pyright clean |
 | M10 | Notifiers (Discord/Telegram/email) | [ ] | |
 | M11 | Rules & allowlist UI | [ ] | |
 | M12 | Auth + first-run wizard | [ ] | |
@@ -402,6 +402,48 @@ Proven end to end:
 4. *My dedup test asserted the wrong thing*: the first ARP seen for the gateway
    legitimately *teaches* its MAC, so a capture of only spoofed packets yields no alert.
    The fixture now includes the honest exchange first — which is also the realistic case.
+
+### M9 — Suricata integration (2026-10-14)
+
+`sensors/suricata_ingest.py`. EVE JSON → normalized events; rule filters rendered from
+the database.
+
+```text
+$ uv run pytest tests/test_suricata_ingest.py -q
+........................                                                 [100%]
+24 passed in 0.10s
+$ uv run pytest → 120 passed · ruff → All checks passed! · pyright → 0 errors
+```
+
+**Everything here was verified against upstream sources before writing code**
+(all retrieved 2026-10-14), not from memory:
+
+| Fact | Source |
+|---|---|
+| EVE common fields are `src_ip`, `src_port`, **`dest_ip`**, `dest_port`, `proto`, `in_iface`, `app_proto`, `flow_id` — *not* `dst_ip` | `docs.suricata.io/en/latest/output/eve/eve-json-format.html` |
+| `alert` object = `action`, `gid`, `signature_id`, `rev`, `signature`, `category`, `severity`, optional `metadata`/`source`/`target` | same |
+| `suricata-update` has **no** `disable-rule`/`enable-rule` command — only source-level ones | its `suricata/update/commands/` tree |
+| Per-rule control is via `/etc/suricata/{enable,disable,drop,modify}.conf`, options `--disable-conf=` / `--enable-conf=` | `suricata-update/doc/update.rst`, `doc/quickstart.rst` |
+| Filter files accept `gid:sid`, `sid`, `gid:sid:rev`, `re:`, `group:`, `metadata:` | `suricata/update/configs/disable.conf` |
+| **`load_filters()` skips every line starting with `#`** — which is why the shipped samples are fully commented out | `suricata/update/main.py` |
+
+That last row is the one I would have got backwards: Gilgamesh therefore renders
+`disable.conf` / `enable.conf` directives **without** a `#` prefix, which is asserted by
+`test_disable_conf_uses_gid_sid_without_a_hash`.
+
+**Honest UNVERIFIED (recorded as B17).** The EVE docs never state that `severity: 1` is
+the *highest*. The examples (1 on a malware C2 signature, 2 on "generic suspicious POST")
+are consistent with 1 = highest, so that is the default — but the map lives in an
+overridable constructor argument with a test proving it can be inverted, rather than being
+hard-coded. Confirm against a real ET Open signature on the Pi.
+
+Security properties tested: non-integer signature ids and out-of-range ids are rejected
+by validation (not escaping), so no rule text can ever reach `disable.conf` (D-017); the
+reload command is returned as an **argv list**, never a shell string.
+
+Also handled: non-`alert` records (`dns`, `dhcp`, `arp`, `flow`, `http`) are ignored —
+Suricata gives facts, Gilgamesh gives verdicts — and an incomplete trailing line is never
+parsed, because a live tailer constantly sees half-written records.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
