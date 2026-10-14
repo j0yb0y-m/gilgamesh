@@ -56,7 +56,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 
 | M | Goal | Status | Proof |
 |---|---|---|---|
-| M1 | Walking skeleton (uv, FastAPI, SQLite, fake detector, dashboard) | [ ] | |
+| M1 | Walking skeleton (uv, FastAPI, SQLite, fake detector, dashboard) | [x] | `uv run pytest tests/test_skeleton.py -q` → **3 passed**; ruff/pyright clean; live server smoke-tested |
 | M2 | Event pipeline (dedup/cooldown/rate-limit/aggregate/global cap) | [ ] | |
 | M3 | ARP spoofing detector (#1) | [ ] | |
 | M4 | DNS spoofing detector (#2) | [ ] | |
@@ -71,9 +71,62 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M13 | UI completion (dashboard SSE, alerts, devices, health, settings) | [ ] | |
 | M14 | Hardening + install.sh + systemd + docs | [ ] | |
 
-## Phase 5 — Finish
+## Evidence log
 
-- [ ] `README.md`, `docs/DEMO.md`
+### M1 — walking skeleton (2026-10-14)
+
+Scaffold: `uv init --package --python 3.13` → `uv python install 3.13` (3.13.16) →
+`uv add fastapi uvicorn jinja2 pydantic-settings` + dev `pytest pytest-asyncio ruff pyright httpx`.
+Resolved versions match the Phase 1 research: **fastapi 0.143.0, starlette 1.8.0, pydantic 2.14.1,
+jinja2 3.1.6, uvicorn 0.54.0**.
+
+```text
+$ uv run pytest tests/test_skeleton.py -q
+...                                                                      [100%]
+3 passed in 0.29s
+
+$ uv run ruff check .            → All checks passed!
+$ uv run ruff format --check .   → 14 files already formatted
+$ uv run pyright                 → 0 errors, 0 warnings, 0 informations
+```
+
+Live smoke test (real server, real HTTP, temp data dir):
+
+```text
+$ GILGAMESH_DATA_DIR=/tmp/opencode/gg-smoke uv run gilgamesh-web &
+$ curl -s localhost:8080/api/healthz
+{"status":"ok"}
+$ curl -s localhost:8080/api/events
+[{"id":"25d99690...","type":"test","severity":"info","detector":"fake",
+  "summary":"hello gilgamesh","details":{"note":"synthetic event ..."},
+  "dedup_key":"fake|test|-|-"}]
+$ curl -s localhost:8080/   → rendered HTML containing "hello gilgamesh"
+```
+
+Storage check on the file that was actually written:
+
+```text
+$ sqlite3 gilgamesh.db
+journal_mode = wal
+busy_timeout = 5000
+tables       = ['events', 'schema_version']
+event count  = 1
+```
+
+**Two corrections made during M1 (both would have been wrong from memory):**
+
+1. **Starlette 1.8.0 deprecates `httpx` for `TestClient`** and raises
+   `StarletteDeprecationWarning: ... install httpx2 instead`. `httpx2 2.13.1` was added as a
+   dev dependency. (`filterwarnings = ["error"]` in pytest turned the warning into a collection
+   error, which is exactly why it was caught.)
+2. **Ruff 0.17 formats Python code blocks inside Markdown.** Left alone it would have
+   rewritten the quoted code samples inside `docs/research/*.md` — the evidence records.
+   Fixed with `extend-exclude = ["docs"]`.
+
+Also resolved: `host = "0.0.0.0"` trips ruff `S104`; kept with an inline explanation of why
+it is safe (bridge members hold no IP addresses) rather than muting it silently.
+
+## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
 - [ ] Final report
 

@@ -1,0 +1,79 @@
+[project]
+name = "gilgamesh"
+version = "0.1.0"
+description = "Home-network NIDS for Raspberry Pi 4 — detect and alert only"
+authors = [
+    { name = "j0yb0y-m", email = "jb.mahdi@outlook.com" }
+]
+requires-python = ">=3.13"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
+readme = "README.md"
+keywords = ["nids", "ids", "security", "raspberry-pi", "home-network", "suricata", "scapy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+dependencies = [
+    "fastapi>=0.143.0",
+    "jinja2>=3.1.6",
+    "pydantic-settings>=2.15.0",
+    "uvicorn>=0.54.0",
+]
+
+# Infrastructure entrypoints only — there is deliberately NO user-facing CLI (constraint C2).
+# These are executed by systemd units, not by the owner.
+[project.scripts]
+gilgamesh-web = "gilgamesh.web.server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "httpx2>=2.13.1",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+# docs/ holds research notes whose Python snippets are quoted evidence, not our
+# code. Ruff 0.17 formats Markdown code blocks; reformatting them would alter the
+# exact snippets we cite, so docs are excluded from both linting and formatting.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "S", "RUF", "ANN", "ASYNC", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN001", "ANN201", "ANN202"]
+"deploy/**" = ["S"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", ".venv"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+filterwarnings = ["error"]

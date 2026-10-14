@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Gilgamesh{% endblock %}
+
+{% block content %}
+<section id="events">
+  <h2>Recent events</h2>
+  {% if events %}
+    <ul>
+      {% for event in events %}
+        <li data-event-id="{{ event.id }}" data-severity="{{ event.severity }}">
+          <span class="severity">{{ event.severity }}</span>
+          <span class="type">{{ event.type }}</span>
+          <span class="summary">{{ event.summary }}</span>
+          <time datetime="{{ event.ts.isoformat() }}">{{ event.ts.isoformat() }}</time>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No events recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
