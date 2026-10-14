@@ -58,7 +58,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 |---|---|---|---|
 | M1 | Walking skeleton (uv, FastAPI, SQLite, fake detector, dashboard) | [x] | `uv run pytest tests/test_skeleton.py -q` → **3 passed**; ruff/pyright clean; live server smoke-tested |
 | M2 | Event pipeline (dedup/cooldown/rate-limit/aggregate/global cap) | [x] | `uv run pytest tests/test_pipeline.py -q` → **10 passed**; 10 000-event burst → 1 alert; ruff/pyright clean |
-| M3 | ARP spoofing detector (#1) | [ ] | |
+| M3 | ARP spoofing detector (#1) | [x] | `uv run pytest tests/test_arp.py -q` → **14 passed**; gateway-MAC-change alerts, benign re-announcement silent; ruff/pyright clean |
 | M4 | DNS spoofing detector (#2) | [ ] | |
 | M5 | DHCP detector (#3) | [ ] | |
 | M6 | Scan + SYN-flood detector (#4) | [ ] | |
@@ -162,6 +162,47 @@ Each stage has its own test, plus the two properties that matter most:
 
 pyright strict also caught `field(default_factory=deque)` inferring `deque[Unknown]`;
 fixed by `default_factory=lambda: deque[float]()`.
+
+### M3 — ARP spoofing detector (2026-10-14)
+
+`src/gilgamesh/sensors/arp.py` + `src/gilgamesh/util/net.py`. Scapy 2.8.0 added. Five
+detections: `gateway_mac_changed`, `ip_mac_conflict`, `ethernet_source_mismatch`,
+`unsolicited_arp_reply`, `gratuitous_arp_flood`.
+
+**Scapy API verified against the installed 2.8.0** rather than from memory:
+`ARP` fields are `hwtype, ptype, hwlen, plen, op, hwsrc, psrc, hwdst, pdst`;
+`op` is an `int`; `psrc`/`pdst` are `str` subclasses; `ARP in packet` / `packet[ARP]` work.
+
+```text
+$ uv run pytest tests/test_arp.py -q
+..............                                                           [100%]
+14 passed in 0.22s
+
+$ uv run pytest            → 27 passed
+$ uv run ruff check .      → All checks passed!
+$ uv run ruff format --check . → 20 files already formatted
+$ uv run pyright           → 0 errors, 0 warnings, 0 informations
+```
+
+Attack caught / benign tolerated pairs (the part that decides whether the tool is usable):
+
+| Attack → detected | Benign → silent |
+|---|---|
+| gateway advertised from a new MAC → `HIGH` | 20 rounds of normal host↔gateway ARP → silent |
+| two MACs claim one IP → `HIGH` | host re-announcing its own IP/MAC (DHCP-renewal shape) → silent |
+| Ethernet src ≠ ARP sender → `MEDIUM` | RFC 5227 gratuitous ARPs (5×) → silent |
+| reply matching no request → `MEDIUM` | reply to a request seen 0.1 s earlier → silent |
+| 26 gratuitous ARPs in 5.2 s → `HIGH` | ARP probes (all-zero sender) → ignored entirely |
+| — | packets seen during warm-up → learned, not judged |
+
+Two bugs caught by the tests themselves: a `ether`/`ethernet` typo in `parse_arp`, and a
+test helper whose `**overrides` could not override its own `warmup_seconds` default.
+
+**A note on the unsolicited-reply rule.** The first version flagged any reply with no
+matching request, which made `test_device_reannouncing_itself_does_not_alert` fail — a
+device updating its neighbours is legitimate. The shipped rule only fires when the reply
+matches no recent request **and** disagrees with a binding already learned. That guard is
+the difference between a detector people trust and one they mute.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green

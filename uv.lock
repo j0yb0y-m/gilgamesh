@@ -85,6 +85,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "pydantic-settings" },
+    { name = "scapy" },
     { name = "uvicorn" },
 ]
 
@@ -103,6 +104,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.143.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
+    { name = "scapy", specifier = ">=2.8.0" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
 
@@ -556,6 +558,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/bf/024e01e1f6aec87768696725e648ed5b438941341eea8f8100beb681961f/ruff-0.17.0-py3-none-win32.whl", hash = "sha256:5e50aa5b84decd9fe5b0bb0e6f71c3b592f1767ed09faa4b7207d933961e35cd", size = 9904112, upload-time = "2026-10-09T19:47:19.75Z" },
     { url = "https://files.pythonhosted.org/packages/cc/77/1ee73df41dcc8d1cdb686ee4bc46ea29704ea175feb6b95c78420f631ab8/ruff-0.17.0-py3-none-win_amd64.whl", hash = "sha256:8ab76bcda86dfd28e13776cb5de3c7bcdcf1ae3d37ed761113d1a5a415dc134c", size = 10115585, upload-time = "2026-10-09T19:47:22.698Z" },
     { url = "https://files.pythonhosted.org/packages/fd/71/eb4f0ccc844aece56963e8578df9c95d4c00f580547d52329d4035d3af18/ruff-0.17.0-py3-none-win_arm64.whl", hash = "sha256:c154c73ff43f9854395e24cac507af13078962e53d2b511605058d22af1fdb88", size = 9872035, upload-time = "2026-10-09T19:47:26.306Z" },
+]
+
+[[package]]
+name = "scapy"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/80/06/f7e09b3240196326fb343d6bd931cafedd26ae1dfdbd7cd0183cae3029d3/scapy-2.8.0.tar.gz", hash = "sha256:0eacd1f940d115611c1b8a4696f315b4b80caf2951e546893a3d0cd7f6bfd6fd", size = 2578223, upload-time = "2026-10-02T16:25:18.874Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/1e/f07107ed79e69a659f1ab65ee7894d71fc1cf15108cf475782d3979a480d/scapy-2.8.0-py3-none-any.whl", hash = "sha256:abf855145ee829a42b2eb28983cd6a0a52b12a31d3f861cb7be36791195ed9aa", size = 2762122, upload-time = "2026-10-02T16:25:17.26Z" },
 ]
 
 [[package]]
