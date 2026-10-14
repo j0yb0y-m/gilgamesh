@@ -65,7 +65,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M7 | Device inventory (#5) | [x] | `uv run pytest tests/test_inventory.py -q` → **11 passed**; new device info/low, randomised MACs downgraded to info, learning period absorbs the boot storm; ruff/pyright clean |
 | M8 | Capture abstraction + sensor runner + PCAP replay | [x] | `uv run pytest tests/test_pcap_replay.py -q` → **15 passed**; a recorded ARP-spoof pcap produces a stored alert on a plain dev machine (C10 satisfied); ruff/pyright clean |
 | M9 | Suricata integration (#6) | [x] | `uv run pytest tests/test_suricata_ingest.py -q` → **24 passed**; EVE alert → event; rule filters rendered without `#`; ruff/pyright clean |
-| M10 | Notifiers (Discord/Telegram/email) | [ ] | |
+| M10 | Notifiers (Discord/Telegram/email) | [x] | `uv run pytest tests/test_notifiers.py -q` → **28 passed**; all three channels built, retries/backoff, quiet hours, redaction, bounded queue; no network in tests; ruff/pyright clean |
 | M11 | Rules & allowlist UI | [ ] | |
 | M12 | Auth + first-run wizard | [ ] | |
 | M13 | UI completion (dashboard SSE, alerts, devices, health, settings) | [ ] | |
@@ -444,6 +444,53 @@ reload command is returned as an **argv list**, never a shell string.
 Also handled: non-`alert` records (`dns`, `dhcp`, `arp`, `flow`, `http`) are ignored —
 Suricata gives facts, Gilgamesh gives verdicts — and an incomplete trailing line is never
 parsed, because a live tailer constantly sees half-written records.
+
+### M10 — notifiers (2026-10-14)
+
+`notifiers/{base,discord,telegram,email}.py`. All three channels (D-021). Added
+`aiosmtplib` 5.1.3.
+
+```text
+$ uv run pytest tests/test_notifiers.py -q
+............................                                             [100%]
+28 passed
+$ uv run pytest → 148 passed in 1.05s · ruff → All checks passed! · pyright → 0 errors
+```
+
+**API contracts verified before coding** (2026-10-14):
+
+* **Telegram** — `core.telegram.org/bots/api`: every request is
+  `https://api.telegram.org/bot<token>/METHOD_NAME`, HTTPS, GET or POST, parameters as
+  query string / urlencoded / JSON. `sendMessage` requires `chat_id` and `text`. The token
+  comes from **@BotFather**; the chat id from **@userinfobot** or `getUpdates`.
+* **Discord** — `discord.com/developers/docs/resources/webhook`: webhooks post JSON with
+  `content` and need no bot. `wait=true` is appended so a rate-limited message produces a
+  real non-2xx instead of a misleading `204`.
+* **`aiosmtplib.send`** signature checked directly: the parameter is **`use_tls`**, *not*
+  `tls` — my first draft passed a parameter that does not exist. `validate_certs`
+  defaults to `True` and is now set explicitly, with a comment saying why it stays on.
+
+**Honest UNVERIFIED:** Discord's per-webhook rate limit (widely cited as 5 requests /
+5 s) is on a JS-rendered page I could not read. No constant is baked in; throttling is
+handled generically via HTTP 429 plus `Retry-After` / `X-RateLimit-*`, recorded as B17-
+adjacent in `09-open-questions.md`.
+
+**A real secret leak, found by a test.** `httpx` exception strings embed the request
+URL — and for a Discord webhook **the URL is the secret**. Redaction was only applied to
+raised exceptions, not to the `error` string a transport *returns*, so a failing request
+would have written the webhook token into the log. `deliver()` now redacts every result
+unconditionally; `test_errors_are_redacted` locks it in.
+
+**A real behaviour bug, found by the slowest-test report.** A channel with no webhook URL
+configured was being retried 4× with exponential backoff — 3.5 seconds wasted on an
+error that cannot fix itself. `DeliveryResult.permanent` now short-circuits retries, and
+the suite went from 4.5 s to 1.03 s.
+
+Also covered: per-channel minimum severity, quiet hours **including a window that wraps
+midnight** (22:00→07:00), message truncation to each provider's limit, Telegram tokens
+percent-encoded so a stray `/` cannot move the path segment, Discord `allowed_mentions`
+disabled so a scan never pings a human, and a bounded queue that drops the newest alert
+rather than growing without limit.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
