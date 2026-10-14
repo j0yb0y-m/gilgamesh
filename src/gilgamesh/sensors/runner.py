@@ -175,3 +175,66 @@ class SensorRunner:
         if label is None or event.interface is not None:
             return event
         return event.model_copy(update={"interface": label})
+
+
+def main() -> None:
+    """Entry point for ``gilgamesh-sensor`` service."""
+    import logging
+    import signal
+    import sys
+    from threading import Event
+
+    from gilgamesh.config import Settings
+    from gilgamesh.db import Database
+    from gilgamesh.devices import DeviceStore
+    from gilgamesh.pipeline import Pipeline
+    from gilgamesh.rules import RuleConfigService, default_catalogue
+    from gilgamesh.sensors.arp import ArpConfig, ArpDetector
+    from gilgamesh.sensors.dhcp import DhcpConfig, DhcpDetector
+    from gilgamesh.sensors.dns import DnsConfig, DnsDetector
+    from gilgamesh.sensors.inventory import InventoryConfig, InventoryDetector
+    from gilgamesh.sensors.scan_flood import ScanConfig, ScanDetector
+    from gilgamesh.web.auth import create_auth_service
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+
+    settings = Settings()
+    db = Database(settings.db_path)
+    db.initialize()
+
+    device_store = DeviceStore(db)
+    _auth = create_auth_service(db)
+    _rules = RuleConfigService(db, default_catalogue())
+    _prefs = None
+
+    pipeline = Pipeline()
+    detectors: list[PacketDetector] = [
+        ArpDetector(ArpConfig(gateway_ip="127.0.0.1")),
+        InventoryDetector(InventoryConfig()),
+        DhcpDetector(DhcpConfig()),
+        DnsDetector(DnsConfig()),
+        ScanDetector(ScanConfig()),
+    ]
+    config = SensorRunnerConfig(interface=None)  # will be configured via env/settings in deployment
+    runner = SensorRunner(detectors, db, pipeline, config, device_store=device_store)
+
+    stop = Event()
+
+    def _handle_signal(signum, frame):  # type: ignore[no-untyped-def]
+        del signum, frame
+        stop.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _handle_signal)  # type: ignore[no-untyped-call]
+
+    try:
+        while not stop.is_set():
+            runner.run_once()
+    finally:
+        db.close()
+        sys.exit(0)
+
+
+__all__ = ["DEVICE_REFRESH_SECONDS", "SensorRunner", "SensorRunnerConfig", "main"]

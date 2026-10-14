@@ -137,4 +137,20 @@ def read_rules_version(settings: Settings) -> str | None:
     return lines[0].strip() if lines else None
 
 
-__all__ = ["RulesUpdateResult", "read_rules_version", "refresh_rules"]
+def main() -> None:
+    """Entry point for ``gilgamesh-rules-update`` service."""
+    from gilgamesh.config import Settings
+    from gilgamesh.db import Database
+    from gilgamesh.rules import RuleConfigService, default_catalogue
+
+    settings = Settings()
+    db = Database(settings.db_path)
+    db.initialize()
+    service = RuleConfigService(db, default_catalogue())
+    result = refresh_rules(settings=settings, rules=service)
+    db.close()
+    if not result.ok:
+        raise SystemExit(1)
+
+
+__all__ = ["RulesUpdateResult", "main", "read_rules_version", "refresh_rules"]
