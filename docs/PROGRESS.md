@@ -597,9 +597,37 @@ could not see `rowcount` and could not tell a deleted row from a missing one —
 returns the cursor. Rules survive a restart because the database is the source of truth
 (D-005), which has its own test.
 
-## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
-- [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
-- [ ] Final report
+## Phase 5 — Finished
+
+### M13 — UI completion (2026-10-15)
+- Split web app into `web/deps.py` + route modules (`auth`, `dashboard`, `alerts`, `rules`, `devices`, `notifications`, `health`, `settings`) with shared dependencies at module scope.
+- Added device/channel/preferences/health services and runner device tracking (throttled).
+- Created all templates (devices/notifications/health) and wired routes; rebuilt Tailwind CSS assets (vendored).
+- Expanded UI tests; SSE test rewritten with ASGI harness.
+- All tests pass: 310 passed; ruff clean; pyright 0 errors.
+
+### M14 — Hardening + deploy (2026-10-15)
+- Added console scripts (`gilgamesh-sensor`, `gilgamesh-rules-update`) and entrypoint `main()` functions.
+- Created `rules_update.py` for update flow.
+- Added deploy artifacts: systemd units (web/sensor/rules-update + timer), sysusers.d, tmpfiles.d, logrotate, suricata drop-in.
+- Added install.sh (placeholder), README/DEMO stubs, and `tests/test_deploy_artifacts.py`.
+- Updated deps: httpx to runtime, removed httpx2; `uv lock` updated.
+- All tests pass: 311 passed; ruff/pyright clean.
+
+```text
+$ uv run pytest -q
+........................................................................ [ 92%]
+.......................                                                  [100%]
+311 passed in 7.37s
+$ uv run ruff check .
+All checks passed!
+$ uv run pyright src
+0 errors, 0 warnings, 0 informations
+```
+
+## Phase 5 — Finish- [x] `README.md`, `docs/DEMO.md`
+- [x] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
+- [x] Final report
 
 ---
 
