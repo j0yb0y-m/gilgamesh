@@ -19,14 +19,15 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from gilgamesh.models import Event, EventType, Severity
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -79,6 +80,48 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_login_attempts_key_ts ON login_attempts(key, ts);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         TEXT NOT NULL,
+    username   TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    created_ts REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(created_ts);
+
+CREATE TABLE IF NOT EXISTS devices (
+    mac        TEXT PRIMARY KEY,
+    ips        TEXT NOT NULL DEFAULT '[]',
+    hostname   TEXT,
+    vendor     TEXT,
+    first_ts   TEXT NOT NULL,
+    last_ts    TEXT NOT NULL,
+    trusted    INTEGER NOT NULL DEFAULT 0,
+    randomised INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_last_ts ON devices(last_ts);
+CREATE INDEX IF NOT EXISTS idx_devices_trusted ON devices(trusted);
+
+CREATE TABLE IF NOT EXISTS channels (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,
+    config       TEXT NOT NULL,
+    min_severity TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    quiet_start  TEXT,
+    quiet_end    TEXT
+);
+
+-- One row per channel kind: the UI configures Discord, Telegram, and email, once each.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_kind ON channels(kind);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -104,6 +147,11 @@ class Database:
             row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+            elif int(row["version"]) < SCHEMA_VERSION:
+                # Every table is ``CREATE TABLE IF NOT EXISTS``, so bringing an older
+                # file up to date *is* running the schema again; recording the new
+                # version keeps the marker honest.
+                conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     def insert_event(self, event: Event) -> Event:
         """Persist ``event`` and return it unchanged."""
@@ -158,6 +206,26 @@ class Database:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+
+    def insert_audit_entry(
+        self, action: str, username: str = "system", created_ts: float = 0.0
+    ) -> None:
+        """Record that the owner changed something.
+
+        Acknowledging an alert, changing a rule, and adding an allowlist entry all land
+        here, so "who turned that off, and when" always has an answer.
+        """
+        conn = self._connect()
+        moment = created_ts or time.time()
+        with self._lock:
+            conn.execute(
+                "INSERT INTO audit_log (ts, username, action, created_ts) VALUES (?, ?, ?, ?)",
+                (datetime.fromtimestamp(moment, UTC).isoformat(), username, action, moment),
+            )
+
+    def audit_entries(self, limit: int = 100) -> list[sqlite3.Row]:
+        """Recent audit entries, newest first."""
+        return self.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
 
     # --- generic statements -------------------------------------------------
 
@@ -269,6 +337,21 @@ class Database:
         conn = self._connect()
         with self._lock:
             conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
+
+    def delete_sessions_for_user(self, user_id: int) -> None:
+        """Revoke every session belonging to a user, e.g. after a password change."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+    def set_password(self, username: str, password_hash: str) -> None:
+        """Replace a user's password hash."""
+        conn = self._connect()
+        with self._lock:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (password_hash, username),
+            )
 
     def get_username(self, user_id: int) -> str | None:
         """Return the username for a user id."""

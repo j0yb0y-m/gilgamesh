@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Alerts — Gilgamesh{% endblock %}
+
+{% block content %}
+<section id="alerts">
+  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Alerts</h1>
+
+  <form method="get" action="/alerts" class="mb-4 flex flex-wrap gap-2 text-sm">
+    <select name="severity" aria-label="Severity">
+      <option value="">Any severity</option>
+      {% for choice in severities %}
+        <option value="{{ choice }}" {% if severity == choice %}selected{% endif %}>
+          {{ choice }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <select name="event_type" aria-label="Type">
+      <option value="">Any type</option>
+      {% for choice in event_types %}
+        <option value="{{ choice }}" {% if event_type == choice %}selected{% endif %}>
+          {{ choice }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <input
+      type="search"
+      name="search"
+      value="{{ search }}"
+      placeholder="Search summaries"
+      aria-label="Search"
+    />
+    <button type="submit">Filter</button>
+  </form>
+
+  {% if events %}
+    <ul class="divide-y divide-slate-200 rounded border border-slate-200">
+      {% for event in events %}
+        <li class="p-3" data-event-id="{{ event.id }}" data-severity="{{ event.severity }}">
+          <a class="flex items-baseline gap-3" href="/alerts/{{ event.id }}">
+            <span class="w-20 shrink-0 text-xs font-semibold uppercase text-slate-500">
+              {{ event.severity }}
+            </span>
+            <span class="w-32 shrink-0 text-xs text-slate-500">{{ event.type }}</span>
+            <span class="flex-1 text-sm text-slate-900">{{ event.summary }}</span>
+            <time class="shrink-0 text-xs text-slate-400" datetime="{{ event.ts.isoformat() }}">
+              {{ event.ts.isoformat(timespec="seconds") }}
+            </time>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="text-sm text-slate-500">No alerts match these filters.</p>
+  {% endif %}
+</section>
+{% endblock %}

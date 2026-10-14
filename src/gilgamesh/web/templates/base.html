@@ -4,23 +4,46 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Gilgamesh{% endblock %}</title>
+    {# Everything is vendored: no CDN links and no external fonts (constraint C5). #}
+    <link rel="stylesheet" href="/static/css/app.css" />
+    <script src="/static/js/vendor/htmx.min.js" defer></script>
+    <script src="/static/js/vendor/alpine-csp.min.js" defer></script>
+    <script src="/static/js/app.js" defer></script>
   </head>
   <body hx-headers='{"X-CSRF-Token": "{{ session.csrf_token if session else "" }}"}'>
-    <header>
-      <h1>Gilgamesh</h1>
-      {% if session %}
-        <nav>
-          <a href="/">Dashboard</a>
-          <a href="/settings">Settings</a>
-          <form method="post" action="/logout">
-            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
-            <button type="submit">Sign out</button>
-          </form>
-        </nav>
-      {% endif %}
+    <header class="border-b border-slate-200 bg-slate-50">
+      <div class="mx-auto flex max-w-5xl items-center justify-between p-4">
+        <a href="/" class="text-lg font-semibold text-slate-900">Gilgamesh</a>
+        {% if session %}
+          <nav class="flex items-center gap-4 text-sm">
+            <a class="text-slate-700 hover:text-slate-900" href="/">Dashboard</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/alerts">Alerts</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/devices">Devices</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/rules">Rules</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/suppressions">Allowlist</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/notifications">Alerts out</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/health">Health</a>
+            <a class="text-slate-700 hover:text-slate-900" href="/settings">Settings</a>
+            <form method="post" action="/logout">
+              <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+              <button
+                type="submit"
+                class="rounded border border-slate-300 px-2 py-1 text-slate-700"
+              >
+                Sign out
+              </button>
+            </form>
+          </nav>
+        {% endif %}
+      </div>
     </header>
-    <main>
-      {% if error %}<p role="alert" class="error">{{ error }}</p>{% endif %}
+
+    <main class="mx-auto max-w-5xl p-4">
+      {% if error %}
+        <p role="alert" class="mb-4 rounded border border-red-300 bg-red-50 p-2 text-red-800">
+          {{ error }}
+        </p>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </body>

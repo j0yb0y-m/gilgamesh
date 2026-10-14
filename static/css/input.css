@@ -1,0 +1,15 @@
+/* Tailwind CSS v4 — CSS-first configuration (decision D-010).
+ *
+ * v4 has no tailwind.config.js: theme and sources are declared in CSS. This file is
+ * the build input; the generated `app.css` is committed so the Raspberry Pi never needs
+ * Node.js (constraint C6).
+ *
+ * Rebuild with the standalone CLI after editing templates:
+ *   tailwindcss build -i static/css/input.css -o static/css/app.css
+ */
+
+@import "tailwindcss";
+
+/* Gilgamesh scans its own templates for class names — no config file, no safelist. */
+@source "../../src/gilgamesh/web/templates/**/*.html";
+@source "../../src/gilgamesh/web/**/*.py";

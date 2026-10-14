@@ -26,9 +26,21 @@ class Settings(BaseSettings):
     # of their own, so only the bridge's management IP is reachable.
     host: str = "0.0.0.0"  # noqa: S104
     port: int = Field(default=8080, ge=1, le=65535)
+    #: Where ``suricata-update`` keeps its filter files (``disable.conf`` /
+    #: ``enable.conf``). Deployment writes there; the app only reads the path.
+    suricata_config_dir: Path = Path("/etc/suricata")
+    #: The updater and the command socket used to reload rules after an update.
+    suricata_update_command: str = "suricata-update"
+    suricata_socket: Path = Path("/var/run/suricata/suricata-command.socket")
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def db_path(self) -> Path:
         """Location of the SQLite database holding config, devices, and events."""
         return self.data_dir / "gilgamesh.db"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rules_version_path(self) -> Path:
+        """Where the last successful rules update records its version."""
+        return self.data_dir / "rules_version.txt"

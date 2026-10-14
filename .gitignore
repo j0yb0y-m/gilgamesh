@@ -29,3 +29,7 @@ certs/
 # --- build scratch / logs ---
 node_modules/
 *.log
+
+# --- agent working scratch (never committed) ---
+.superpowers/
+

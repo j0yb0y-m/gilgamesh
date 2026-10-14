@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Alert — Gilgamesh{% endblock %}
+
+{% block content %}
+<section id="alert-detail">
+  <p class="mb-2 text-sm">
+    <a class="text-slate-600 underline" href="/alerts">&larr; Back to alerts</a>
+  </p>
+
+  <h1 class="text-2xl font-semibold text-slate-900">{{ event.summary }}</h1>
+
+  <dl class="my-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+    {% for label, value in [
+      ("Severity", event.severity),
+      ("Type", event.type),
+      ("Detector", event.detector),
+      ("Source IP", event.src_ip or "—"),
+      ("Source MAC", event.src_mac or "—"),
+      ("Destination IP", event.dst_ip or "—"),
+      ("Interface", event.interface or "—"),
+      ("Time", event.ts.isoformat()),
+    ] %}
+      <div>
+        <dt class="text-xs uppercase text-slate-400">{{ label }}</dt>
+        <dd class="text-slate-800">{{ value }}</dd>
+      </div>
+    {% endfor %}
+  </dl>
+
+  <h2 class="mt-4 text-lg font-semibold text-slate-900">Evidence</h2>
+  <dl class="mt-2 divide-y divide-slate-200 rounded border border-slate-200 text-sm">
+    {% for key, value in details | dictsort %}
+      <div class="flex gap-2 p-2">
+        <dt class="w-48 shrink-0 text-slate-500">{{ key }}</dt>
+        <dd class="flex-1 text-slate-900">
+          {% if value is string or value is number %}{{ value }}{% else %}{{ value | tojson }}{% endif %}
+        </dd>
+      </div>
+    {% endfor %}
+  </dl>
+
+  <form method="post" action="/alerts/{{ event.id }}/acknowledge" class="mt-4">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+    <button
+      type="submit"
+      class="rounded bg-slate-800 px-3 py-2 text-sm text-white hover:bg-slate-700"
+    >
+      Acknowledge
+    </button>
+  </form>
+</section>
+{% endblock %}

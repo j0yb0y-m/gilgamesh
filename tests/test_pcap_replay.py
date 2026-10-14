@@ -22,6 +22,7 @@ from scapy.packet import Packet
 from scapy.utils import PcapWriter
 
 from gilgamesh.db import Database
+from gilgamesh.devices import DeviceStore
 from gilgamesh.models import Event
 from gilgamesh.pipeline import Pipeline, PipelineDecision
 from gilgamesh.sensors.arp import ArpConfig, ArpDetector
@@ -181,6 +182,62 @@ def test_runner_fans_out_to_every_detector(tmp_path: Path) -> None:
 
     detectors = {event.detector for event in db.list_events()}
     assert detectors == {"arp", "inventory"}
+    db.close()
+
+
+def test_runner_mirrors_observed_devices_into_the_inventory(tmp_path: Path) -> None:
+    """The Devices page reads the database, so the runner must write the devices it sees."""
+    path = write_pcap(
+        tmp_path / "devices.pcap",
+        [
+            arp_reply(GATEWAY_MAC, GATEWAY_IP, HOST_MAC, HOST_IP),
+            arp_reply(ATTACKER_MAC, "10.0.0.9", HOST_MAC, HOST_IP),
+        ],
+    )
+    db = Database(tmp_path / "gilgamesh.db")
+    db.initialize()
+    store = DeviceStore(db)
+    runner = SensorRunner(
+        [],
+        db,
+        Pipeline(),
+        SensorRunnerConfig(source=path, interface="br0"),
+        device_store=store,
+    )
+
+    runner.run_once()
+
+    recorded = {device.mac: device.ips for device in store.list()}
+    assert recorded == {GATEWAY_MAC: (GATEWAY_IP,), ATTACKER_MAC: ("10.0.0.9",)}
+    db.close()
+
+
+def test_runner_refreshes_a_device_row_at_most_once_per_window(tmp_path: Path) -> None:
+    """Repeats must not turn every packet into an SD-card write."""
+    path = write_pcap(
+        tmp_path / "repeat.pcap",
+        [arp_reply(GATEWAY_MAC, GATEWAY_IP, HOST_MAC, HOST_IP) for _ in range(5)],
+    )
+    db = Database(tmp_path / "gilgamesh.db")
+    db.initialize()
+    writes: list[str] = []
+
+    class CountingStore(DeviceStore):
+        def upsert(self, mac: str, **kwargs: object):  # type: ignore[override]
+            writes.append(mac)
+            return super().upsert(mac, **kwargs)
+
+    runner = SensorRunner(
+        [],
+        db,
+        Pipeline(),
+        SensorRunnerConfig(source=path),
+        device_store=CountingStore(db),
+    )
+
+    runner.run_once()
+
+    assert len(writes) == 1
     db.close()
 
 

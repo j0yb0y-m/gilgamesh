@@ -17,19 +17,27 @@ web tier cannot read the network and a fault in the web tier cannot stop detecti
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from scapy.packet import Packet
 
 from gilgamesh.db import Database
+from gilgamesh.devices import DeviceStore
 from gilgamesh.models import Event
 from gilgamesh.pipeline import Pipeline, PipelineDecision
 from gilgamesh.sensors.base import PacketDetector
 from gilgamesh.sensors.capture import DEFAULT_BPF, PacketSource, make_source
+from gilgamesh.sensors.inventory import is_randomised_mac, observe_device
 
 logger = logging.getLogger(__name__)
+
+#: How long a device's ``last_seen`` may go un-refreshed while the box is busy. A packet
+#: is not a reason to write to SQLite, but the Devices page must not show a stale "seen"
+#: time either, so a repeat sighting refreshes the row at most this often.
+DEVICE_REFRESH_SECONDS = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +67,20 @@ class SensorRunner:
         database: Database,
         pipeline: Pipeline,
         config: SensorRunnerConfig | None = None,
+        *,
+        device_store: DeviceStore | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._detectors = list(detectors)
         self._database = database
         self._pipeline = pipeline
         self._config = config if config is not None else SensorRunnerConfig()
+        #: When set, every observed device is mirrored into the inventory table so the web
+        #: tier (a different process) can render the Devices page. Optional so the runner
+        #: stays usable in tests that only care about detectors.
+        self._device_store = device_store
+        self._clock = clock if clock is not None else time.monotonic
+        self._device_refreshed: dict[str, float] = {}
         self._processed = 0
 
     @property
@@ -97,6 +114,7 @@ class SensorRunner:
 
     def _handle(self, packet: Packet) -> None:
         """Run one packet through every detector, then the pipeline, then storage."""
+        self._record_device(packet)
         for detector in self._detectors:
             try:
                 events = detector.process(packet)
@@ -105,6 +123,36 @@ class SensorRunner:
                 continue
             for event in events:
                 self._submit(event)
+
+    def _record_device(self, packet: Packet) -> None:
+        """Mirror a sighting into the device inventory, at most once per refresh window.
+
+        The detectors keep the authoritative in-memory view; this is only so the web
+        process can see the same devices. Writes are throttled because there is one
+        packet per write otherwise, which a Pi's SD card will not thank us for.
+        """
+        if self._device_store is None:
+            return
+        observed = observe_device(packet)
+        if observed is None:
+            return
+        now = self._clock()
+        last = self._device_refreshed.get(observed.mac)
+        if last is not None and now - last < DEVICE_REFRESH_SECONDS:
+            return
+        self._device_refreshed[observed.mac] = now
+        try:
+            self._device_store.upsert(
+                observed.mac,
+                ip=observed.ip,
+                hostname=observed.hostname,
+                randomised=is_randomised_mac(observed.mac),
+            )
+        except ValueError:
+            # A malformed address is not worth stopping capture for.
+            logger.debug("ignoring device with unparseable address")
+        except Exception:
+            logger.exception("failed to record device %s", observed.mac)
 
     def _submit(self, event: Event) -> None:
         """Pass an event to the pipeline and store it if it survives."""

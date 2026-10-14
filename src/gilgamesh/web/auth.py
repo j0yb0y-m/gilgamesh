@@ -294,6 +294,22 @@ class AuthService:
         """Destroy a session."""
         self._db.delete_session(sid)
 
+    def change_password(self, username: str, current_password: str, new_password: str) -> User:
+        """Change a user's password after re-checking the current one.
+
+        Every existing session for the user is revoked, because a password change is
+        exactly the moment an owner expects "log everyone else out" — including a
+        refresh of this browser's own session, which the caller re-issues.
+        """
+        record = self._db.get_user(username)
+        if record is None or not verify_password(record[1], current_password):
+            msg = "current password is incorrect"
+            raise PasswordPolicyError(msg)
+        check_password_policy(new_password)
+        self._db.set_password(username, hash_password(new_password))
+        self._db.delete_sessions_for_user(record[0])
+        return User(id=record[0], username=username)
+
     def expire_session(self, sid: str) -> None:
         """Age a session past both timeouts so it is dead.
 

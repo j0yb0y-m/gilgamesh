@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Devices — Gilgamesh{% endblock %}
+
+{% block content %}
+<section id="devices">
+  <div class="mb-4 flex items-baseline justify-between">
+    <h1 class="text-2xl font-semibold text-slate-900">Devices</h1>
+    <span class="text-sm text-slate-500">{{ total }} seen</span>
+  </div>
+
+  {% if notice %}
+    <p role="status" class="mb-4 rounded border border-emerald-300 bg-emerald-50 p-2 text-emerald-800">
+      {{ notice }}
+    </p>
+  {% endif %}
+  {% if error %}
+    <p role="alert" class="mb-4 rounded border border-red-300 bg-red-50 p-2 text-red-800">
+      {{ error }}
+    </p>
+  {% endif %}
+
+  <p class="mb-4 text-sm text-slate-600">
+    Devices the sensor has seen on the network. Trusting a device tells the detectors it
+    is yours; it never hides the device or silences its alerts.
+  </p>
+
+  <nav class="mb-4 flex gap-3 text-sm">
+    <a class="underline {% if not show %}font-semibold{% endif %}" href="/devices">All</a>
+    <a class="underline {% if show == 'untrusted' %}font-semibold{% endif %}" href="/devices?show=untrusted">Untrusted</a>
+    <a class="underline {% if show == 'trusted' %}font-semibold{% endif %}" href="/devices?show=trusted">Trusted</a>
+  </nav>
+
+  {% if devices %}
+    <table class="w-full border-collapse text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+          <th class="py-2 pr-3">Device</th>
+          <th class="py-2 pr-3">Addresses</th>
+          <th class="py-2 pr-3">Last seen</th>
+          <th class="py-2 pr-3">Status</th>
+          <th class="py-2">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for device in devices %}
+          <tr class="border-b border-slate-100 align-top">
+            <td class="py-2 pr-3">
+              {% if device.hostname %}
+                <span class="font-medium text-slate-900">{{ device.hostname }}</span><br />
+              {% endif %}
+              <code class="text-xs text-slate-500">{{ device.mac }}</code>
+              {% if device.randomised %}
+                <span class="ml-2 rounded bg-amber-100 px-1 text-xs text-amber-800">randomised</span>
+              {% endif %}
+            </td>
+            <td class="py-2 pr-3 text-slate-700">
+              {% if device.ips %}{{ device.ips | join(", ") }}{% else %}—{% endif %}
+            </td>
+            <td class="py-2 pr-3 text-slate-500">{{ device.last_ts.isoformat(timespec="seconds") }}</td>
+            <td class="py-2 pr-3">
+              {% if device.trusted %}
+                <span class="rounded bg-emerald-100 px-1 text-xs text-emerald-800">trusted</span>
+              {% else %}
+                <span class="text-xs text-slate-500">unknown</span>
+              {% endif %}
+            </td>
+            <td class="py-2">
+              <div class="flex flex-col gap-1">
+                <form method="post" action="/devices/{{ device.mac }}/trust">
+                  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+                  <input type="hidden" name="trusted" value="{% if device.trusted %}0{% else %}1{% endif %}" />
+                  <button type="submit" class="rounded border border-slate-300 px-2 py-1 text-xs">
+                    {% if device.trusted %}Untrust{% else %}Trust{% endif %}
+                  </button>
+                </form>
+                <form method="post" action="/devices/{{ device.mac }}/rename" class="flex gap-1">
+                  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+                  <input
+                    type="text"
+                    name="hostname"
+                    value="{{ device.hostname or '' }}"
+                    placeholder="name"
+                    class="w-28 rounded border border-slate-300 px-1 py-1 text-xs"
+                  />
+                  <button type="submit" class="rounded border border-slate-300 px-2 py-1 text-xs">
+                    Rename
+                  </button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="rounded border border-slate-200 p-3 text-sm text-slate-500">
+      No devices seen yet. They appear here as soon as the sensor observes traffic.
+    </p>
+  {% endif %}
+</section>
+{% endblock %}
