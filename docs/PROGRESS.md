@@ -59,7 +59,7 @@ Recorded as **D-020…D-027** in `docs/DECISIONS.md`:
 | M1 | Walking skeleton (uv, FastAPI, SQLite, fake detector, dashboard) | [x] | `uv run pytest tests/test_skeleton.py -q` → **3 passed**; ruff/pyright clean; live server smoke-tested |
 | M2 | Event pipeline (dedup/cooldown/rate-limit/aggregate/global cap) | [x] | `uv run pytest tests/test_pipeline.py -q` → **10 passed**; 10 000-event burst → 1 alert; ruff/pyright clean |
 | M3 | ARP spoofing detector (#1) | [x] | `uv run pytest tests/test_arp.py -q` → **14 passed**; gateway-MAC-change alerts, benign re-announcement silent; ruff/pyright clean |
-| M4 | DNS spoofing detector (#2) | [ ] | |
+| M4 | DNS spoofing detector (#2) | [x] | `uv run pytest tests/test_dns.py -q` → **15 passed**; forged id, untrusted resolver, conflicting answers detected; CDN/round-robin/TTL-rewrite silent; ruff/pyright clean |
 | M5 | DHCP detector (#3) | [ ] | |
 | M6 | Scan + SYN-flood detector (#4) | [ ] | |
 | M7 | Device inventory (#5) | [ ] | |
@@ -203,6 +203,51 @@ matching request, which made `test_device_reannouncing_itself_does_not_alert` fa
 device updating its neighbours is legitimate. The shipped rule only fires when the reply
 matches no recent request **and** disagrees with a binding already learned. That guard is
 the difference between a detector people trust and one they mute.
+
+### M4 — DNS spoofing detector (2026-10-14)
+
+`src/gilgamesh/sensors/dns.py`. Three detections: `response_without_matching_query`,
+`untrusted_resolver`, `conflicting_answers`.
+
+```text
+$ uv run pytest tests/test_dns.py -q
+...............                                                          [100%]
+15 passed in 0.24s
+
+$ uv run pytest            → 42 passed
+$ uv run ruff check .      → All checks passed!
+$ uv run ruff format --check . → 22 files already formatted
+$ uv run pyright           → 0 errors, 0 warnings, 0 informations
+```
+
+**Scapy 2.8.0 API correction found by the tests.** `qd`/`an` are now `PacketListField`s —
+they are *lists*. Writing `dns.qd.qname` does not fail; it falls through to Scapy's
+`__getattr__` shim and raises a `DeprecationWarning` ("use `pkt.an[0]` instead of
+`pkt.an`"). Because pytest is configured with `filterwarnings = ["error"]`, the first test
+run failed loudly instead of silently parsing garbage. Index access is now used everywhere.
+
+**Two design bugs the tests caught:**
+
+1. *Transaction key included the resolver.* A spoofed reply comes from a different address
+   than the query went to, so it could **never** match its query — every forgery also
+   reported "no matching query". Worse, a LAN where the router is the resolver would break
+   too. The key is now `(client, transaction id)`, which is how DNS identifies a
+   transaction anyway.
+2. *Unmatched responses are not always attacks.* An unmatched response is flagged only
+   when we watched that transaction age out, **or** the client was querying moments ago. A
+   client we have never seen querying is silence, because that only means Gilgamesh
+   started capturing mid-session.
+
+False-positive guards, each with a test: answers compared on `(name, type, rdata)` with
+**TTL excluded** (so TTL rewriting is not a conflict); conflicts counted **per resolver**;
+conflicting sets must be **pairwise disjoint** (a CDN returning a superset does not
+trip it); entries age out; and the resolver allowlist must be **populated** before anyone
+is called untrusted. Round-robin below threshold is silent; three disjoint sets report
+`LOW`.
+
+Known limits are documented in the module docstring: **DoH/DoT is invisible** (it never
+appears on port 53), and a name genuinely served round-robin from one resolver will
+report `conflicting_answers` — owners should raise `conflict_threshold`.
 
 ## Phase 5 — Finish- [ ] `README.md`, `docs/DEMO.md`
 - [ ] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
