@@ -44,9 +44,11 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "httpx2>=2.13.1",
+    "playwright>=1.64.0",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-playwright>=0.10.0",
     "ruff>=0.17.0",
 ]
 
@@ -66,6 +68,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "S", "RUF", "ANN", "ASYNC", "C4"]
 # S101: asserts are the point of a test. S105: tests need fake webhook URLs and bot
 # tokens on purpose — they are fixtures for the redaction tests, never real credentials.
 "tests/**" = ["S101", "S105", "ANN001", "ANN201", "ANN202"]
+# tests/e2e spawns the real server (fixed argv from the fixture, never user input)
+# and polls its readiness URL, which is always hardcoded http://127.0.0.1.
+"tests/e2e/**" = ["S310", "S603"]
 "deploy/**" = ["S"]
 
 [tool.ruff.format]
@@ -83,5 +88,10 @@ venv = ".venv"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q --strict-markers"
+# E2E browser tests are opt-in: `uv run pytest tests/e2e -m e2e --browser-channel chrome`.
+# The default run stays hermetic and fast.
+addopts = "-q --strict-markers -m 'not e2e'"
 filterwarnings = ["error"]
+markers = [
+    "e2e: drives the real server in a real browser (requires --browser-channel chrome; run with -m e2e)",
+]

@@ -33,6 +33,11 @@ accepts URL-encoded form bodies only, so the combined work stays cleanly GPL-2.0
 | pytest-asyncio | (pin at add) `P` | Apache-2.0 | https://github.com/pytest-dev/pytest-asyncio | yes |
 | ruff | (pin at add) `P` | MIT | https://github.com/astral-sh/ruff | yes |
 | pyright | (pin at add) `P` | MIT | https://github.com/microsoft/pyright | yes |
+| playwright | 1.64.0 `V` (2026-10-18) | Apache-2.0 | https://github.com/microsoft/playwright-python | yes |
+| pytest-playwright | 0.10.0 `V` (2026-10-18) | Apache-2.0 | https://github.com/microsoft/playwright-pytest | yes |
+| python-slugify | 9.1.3 `V` (2026-10-18, transitive of pytest-playwright) | MIT | https://github.com/un33k/python-slugify | yes |
+| pyee | 15.0.0 `V` (2026-10-18, transitive of playwright) | MIT | https://github.com/jfhbrook/pyee | yes |
+| text-unidecode | 1.3 `V` (2026-10-18, transitive of python-slugify) | Artistic-1.0 OR GPL-2.0-or-later (dual) | https://github.com/kmike/text-unidecode/ | yes |
 
 > `pytest-asyncio` is Apache-2.0 — used only as a **dev/test** tool, never shipped in the
 > distributed combined work, so it does not affect the project licence.
@@ -67,6 +72,7 @@ accepts URL-encoded form bodies only, so the combined work stays cleanly GPL-2.0
 | Node.js / npm toolchain on the device | C6 |
 | `python-multipart` | Apache-2.0; avoids GPL-2.0-only linkage tension (not needed: URL-encoded forms only) |
 | `passlib` | unmaintained; superseded by `argon2-cffi` |
+| Google Chrome (E2E test browser) | proprietary, but only *driven* by Playwright on the developer's machine via `--browser-channel chrome`; never installed by the project, never shipped, never runs on the Pi |
 
 ## E. UNVERIFIED
 

@@ -625,6 +625,41 @@ $ uv run pyright src
 0 errors, 0 warnings, 0 informations
 ```
 
+### M15 — browser end-to-end suite (2026-10-18)
+
+Permanent Playwright suite as a dev dependency, driving the **system Google Chrome**
+(`--browser-channel chrome`, no browser download, no sudo) against the real server:
+`tests/e2e/conftest.py` spawns `.venv/bin/gilgamesh-web` on `127.0.0.1` with a temp
+`GILGAMESH_DATA_DIR`, waits on `/api/healthz`, and tears the process down.
+
+- Licences recorded per C1 **before** adding: playwright 1.64.0 (Apache-2.0),
+  pytest-playwright 0.10.0 (Apache-2.0) — verified against installed metadata — plus
+  transitives python-slugify (MIT), pyee (MIT), text-unidecode (Artistic-1.0 OR GPL-2.0+).
+- Opt-in design: `e2e` marker; default `addopts` run `-m "not e2e"` so `uv run pytest`
+  stays hermetic (311 unit tests, e2e deselected).
+- Nine flows: first-run wizard → dashboard, wrong password, sign out/in, dashboard tiles
+  + seeded event, rule toggle round-trip, Discord secret saved-but-not-echoed, one-sided
+  quiet hours rejected, settings persistence across reload, health page report.
+
+**Bug the suite caught:** the `role="alert"` banner rendered **twice** — Jinja shares
+context between `base.html` and page templates, and devices/health/notifications/settings/
+suppressions each also rendered the shared `error` flash. Fixed at the root: `base.html`
+is now the single render site of `error` (page-level blocks removed; `notice` was already
+single-rendered). Playwright's strict mode is the regression guard — a second alert
+element fails the test.
+
+```text
+$ uv sync --frozen → Checked 46 packages
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome
+.........                                                                [100%]
+9 passed in 7.28s
+$ uv run pytest -q
+311 passed, 9 deselected in 10.67s
+$ uv run ruff format --check . → 69 files already formatted
+$ uv run pyright src → 0 errors, 0 warnings, 0 informations
+```
+
+
 ## Phase 5 — Finish- [x] `README.md`, `docs/DEMO.md`
 - [x] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
 - [x] Final report
