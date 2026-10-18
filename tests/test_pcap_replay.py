@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ from scapy.packet import Packet
 from scapy.utils import PcapWriter
 
 from gilgamesh.db import Database
-from gilgamesh.devices import DeviceStore
+from gilgamesh.devices import DeviceRecord, DeviceStore
 from gilgamesh.models import Event
 from gilgamesh.pipeline import Pipeline, PipelineDecision
 from gilgamesh.sensors.arp import ArpConfig, ArpDetector
@@ -223,9 +224,25 @@ def test_runner_refreshes_a_device_row_at_most_once_per_window(tmp_path: Path) -
     writes: list[str] = []
 
     class CountingStore(DeviceStore):
-        def upsert(self, mac: str, **kwargs: object):  # type: ignore[override]
+        def upsert(
+            self,
+            mac: str,
+            *,
+            ip: str | None = None,
+            hostname: str | None = None,
+            vendor: str | None = None,
+            randomised: bool = False,
+            seen_ts: datetime | None = None,
+        ) -> DeviceRecord:
             writes.append(mac)
-            return super().upsert(mac, **kwargs)
+            return super().upsert(
+                mac,
+                ip=ip,
+                hostname=hostname,
+                vendor=vendor,
+                randomised=randomised,
+                seen_ts=seen_ts,
+            )
 
     runner = SensorRunner(
         [],

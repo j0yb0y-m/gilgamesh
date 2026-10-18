@@ -67,7 +67,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "S", "RUF", "ANN", "ASYNC", "C4"]
 [tool.ruff.lint.per-file-ignores]
 # S101: asserts are the point of a test. S105: tests need fake webhook URLs and bot
 # tokens on purpose — they are fixtures for the redaction tests, never real credentials.
-"tests/**" = ["S101", "S105", "ANN001", "ANN201", "ANN202"]
+# ASYNC110: the SSE harness polls an external condition (subscriber count) that has no
+# Event to await — cooperative `asyncio.sleep` polling is the intended design there.
+"tests/**" = ["S101", "S105", "ANN001", "ANN201", "ANN202", "ASYNC110"]
 # tests/e2e spawns the real server (fixed argv from the fixture, never user input)
 # and polls its readiness URL, which is always hardcoded http://127.0.0.1.
 "tests/e2e/**" = ["S310", "S603"]

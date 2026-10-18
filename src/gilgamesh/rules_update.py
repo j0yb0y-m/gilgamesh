@@ -18,6 +18,7 @@ anything that came from a request — and runs with a timeout.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -123,11 +124,9 @@ def _record_version(settings: Settings, updater: subprocess.CompletedProcess[str
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
     summary = (updater.stdout or "").strip().splitlines()
     line = summary[-1] if summary else "suricata-update completed"
-    try:
+    # Not being able to write the stamp must not turn a good update into a failure.
+    with contextlib.suppress(OSError):
         settings.rules_version_path.write_text(f"{stamp}\n{line}\n", encoding="utf-8")
-    except OSError:
-        # Not being able to write the stamp must not turn a good update into a failure.
-        pass
 
 
 def read_rules_version(settings: Settings) -> str | None:

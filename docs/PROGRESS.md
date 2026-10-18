@@ -659,6 +659,38 @@ $ uv run ruff format --check . → 69 files already formatted
 $ uv run pyright src → 0 errors, 0 warnings, 0 informations
 ```
 
+### Gate cleanup — ruff and pyright fully quiet (2026-10-18)
+
+The five pre-existing ruff errors and the 44 strict-mode pyright errors (unscoped run,
+which includes `tests/`) are fixed at the root — no new suppressions beyond one
+documented per-file ignore:
+
+- `rules_update.py`: `contextlib.suppress(OSError)` for the version stamp.
+- `runner.py`: the signal handler gets `signum: int, frame: object`.
+- `routes/notifications.py`: `_send_test` returns its real type, `DeliveryResult`.
+- The SSE test harness in `test_ui_routes.py` was rebuilt around starlette's own typed
+  aliases (`starlette.types.ASIGIApp`/`Message`) instead of untyped `dict`/`Queue`
+  placeholders, and `_wait_until` uses `asyncio.timeout` (renamed param `window` —
+  ASYNC109 bans `timeout` on async defs); the poll loop carries a scoped ASYNC110
+  ignore because there is no `Event` to await — cooperative polling is the design.
+- `test_pcap_replay.py`: `CountingStore.upsert` mirrors the base signature exactly
+  instead of forwarding `**kwargs: object`, dropping the `# type: ignore[override]`.
+
+**Diagnosed en route:** pyright unions `Unknown` into a variable whose initialiser
+carries a `type: ignore` (`bus: EventBus = client.app.state.bus  # type: ignore` made
+every member access resolve as `int | Unknown`). The honest fix binds from the real
+runtime type instead of suppressing a diagnostic: `cast(FastAPI, client.app).state.bus`
+— Starlette declares `.state` on the app and `State.__getattr__` is its explicitly
+typed escape hatch, so the line needs no ignore at all.
+
+```text
+$ uv run pyright        (unscoped: src + tests)   → 0 errors, 0 warnings, 0 informations
+$ uv run ruff check .   → All checks passed!
+$ uv run ruff format --check .  → 69 files already formatted
+$ uv run pytest -q      → 311 passed, 9 deselected in 10.62s
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome → 9 passed in 6.56s
+```
+
 
 ## Phase 5 — Finish- [x] `README.md`, `docs/DEMO.md`
 - [x] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green

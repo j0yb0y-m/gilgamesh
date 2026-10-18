@@ -12,11 +12,14 @@ import asyncio
 import contextlib
 import json
 import re
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Callable, Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.types import ASGIApp, Message
 
 from gilgamesh.config import Settings
 from gilgamesh.db import Database
@@ -88,18 +91,17 @@ def _stream_scope(cookie: bytes) -> dict[str, object]:
     }
 
 
-async def _wait_until(predicate: object, timeout: float = 2.0) -> None:
-    """Spin the loop until ``predicate()`` is true, or fail the test."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not predicate():  # type: ignore[operator]
-        if loop.time() >= deadline:
-            raise AssertionError("condition was never met")
-        await asyncio.sleep(0.005)
+async def _wait_until(predicate: Callable[[], bool], *, window: float = 2.0) -> None:
+    """Spin until ``predicate()`` is true, or time out after ``window`` seconds."""
+    async with asyncio.timeout(window):
+        while not predicate():
+            await asyncio.sleep(0.005)
 
 
 @contextlib.asynccontextmanager
-async def open_stream(app: object, cookie: bytes) -> AsyncIterator[tuple[dict, asyncio.Queue]]:
+async def open_stream(
+    app: ASGIApp, cookie: bytes
+) -> AsyncGenerator[tuple[Message, asyncio.Queue[bytes]]]:
     """Drive the real ASGI app and expose the SSE response as it is produced.
 
     ``TestClient`` cannot be used for this: Starlette 1.8 buffers the *whole* response
@@ -107,13 +109,13 @@ async def open_stream(app: object, cookie: bytes) -> AsyncIterator[tuple[dict, a
     Calling the ASGI interface ourselves lets the test read the first frames and then
     disconnect, which is exactly how a browser behaves.
     """
-    start: dict = {}
-    frames: asyncio.Queue = asyncio.Queue()
+    start: Message = {}
+    frames: asyncio.Queue[bytes] = asyncio.Queue()
     connected = asyncio.Event()
     disconnected = asyncio.Event()
     request_sent = False
 
-    async def receive() -> dict:
+    async def receive() -> Message:
         nonlocal request_sent
         if not request_sent:
             request_sent = True
@@ -121,14 +123,17 @@ async def open_stream(app: object, cookie: bytes) -> AsyncIterator[tuple[dict, a
         await disconnected.wait()
         return {"type": "http.disconnect"}
 
-    async def send(message: dict) -> None:
+    async def send(message: Message) -> None:
         if message["type"] == "http.response.start":
             start.update(message)
             connected.set()
         elif message["type"] == "http.response.body" and message.get("body"):
             frames.put_nowait(message["body"])
 
-    task = asyncio.create_task(app(_stream_scope(cookie), receive, send))  # type: ignore[operator]
+    async def drive() -> None:
+        await app(_stream_scope(cookie), receive, send)
+
+    task = asyncio.create_task(drive())
     try:
         await asyncio.wait_for(connected.wait(), timeout=2.0)
         yield start, frames
@@ -163,7 +168,7 @@ async def test_bus_delivers_a_published_event() -> None:
 async def test_bus_tracks_subscribers() -> None:
     bus = EventBus()
 
-    async def listen() -> AsyncIterator[object]:
+    async def listen() -> None:
         async for _ in bus.subscribe():
             pass
 
@@ -223,7 +228,9 @@ async def test_stream_sets_the_sse_content_type(client: TestClient) -> None:
 
 async def test_stream_emits_a_published_event(client: TestClient) -> None:
     """The acceptance criterion: an event published on the bus reaches the client."""
-    bus: EventBus = client.app.state.bus  # type: ignore[attr-defined]
+    # ``TestClient`` claims its app is a bare ``ASGIApp``, so ``.state`` is not on
+    # its declared type; the runtime object is the FastAPI app this fixture built.
+    bus: EventBus = cast(FastAPI, client.app).state.bus
     async with open_stream(client.app, _session_cookie(client)) as (_start, frames):
         await _wait_until(lambda: bus.subscriber_count == 1)
         await bus.publish({"id": "abc", "type": "arp_spoof", "severity": "high", "summary": "hi"})

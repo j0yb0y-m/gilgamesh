@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from gilgamesh.channels import ChannelConfigError, ChannelRecord, ChannelStore
 from gilgamesh.models import Event, EventType, Severity
-from gilgamesh.notifiers.base import ChannelKind
+from gilgamesh.notifiers.base import ChannelKind, DeliveryResult
 from gilgamesh.web.auth import Session
 from gilgamesh.web.deps import read_form, require_session, templates, verify_csrf
 
@@ -88,7 +88,9 @@ async def notifications_test(
     )
 
 
-async def _send_test(request: Request, store: ChannelStore, record: ChannelRecord):
+async def _send_test(
+    request: Request, store: ChannelStore, record: ChannelRecord
+) -> DeliveryResult:
     """Deliver one test event, bypassing quiet hours and severity policy.
 
     A "send test" that is silently swallowed by quiet hours would be worse than
