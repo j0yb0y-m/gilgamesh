@@ -11,11 +11,6 @@
       {{ notice }}
     </p>
   {% endif %}
-  {% if error %}
-    <p role="alert" class="mb-4 rounded border border-red-300 bg-red-50 p-2 text-red-800">
-      {{ error }}
-    </p>
-  {% endif %}
   {% if steps %}
     <ol class="mb-4 list-inside list-decimal text-sm text-slate-600">
       {% for step in steps %}<li>{{ step }}</li>{% endfor %}

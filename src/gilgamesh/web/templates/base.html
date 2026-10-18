@@ -39,6 +39,9 @@
     </header>
 
     <main class="mx-auto max-w-5xl p-4">
+      {#- The base context is shared with every page template, so this is the single
+          place the "error" flash is rendered; pages must not repeat it or the
+          banner appears twice (strict-mode E2E selectors enforce this). #}
       {% if error %}
         <p role="alert" class="mb-4 rounded border border-red-300 bg-red-50 p-2 text-red-800">
           {{ error }}
