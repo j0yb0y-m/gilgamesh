@@ -27,6 +27,8 @@ from gilgamesh.config import Settings
 from gilgamesh.rules import RuleConfigService
 from gilgamesh.sensors.suricata_ingest import (
     RuleSetting as SuricataRuleSetting,
+)
+from gilgamesh.sensors.suricata_ingest import (
     render_disable_conf,
     render_enable_conf,
     suricatasc_reload_command,

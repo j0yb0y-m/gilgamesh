@@ -222,7 +222,7 @@ def main() -> None:
 
     stop = Event()
 
-    def _handle_signal(signum, frame):  # type: ignore[no-untyped-def]
+    def _handle_signal(signum, frame) -> None:  # type: ignore[no-untyped-def]
         del signum, frame
         stop.set()
 
