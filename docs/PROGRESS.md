@@ -4,7 +4,7 @@
 acceptance command actually ran and passed; paste the command + key output lines here.
 **Target:** Raspberry Pi 4 (4 GB), Raspberry Pi OS Lite 64-bit (Debian 13 trixie, Py 3.13).
 **Dev machine:** x86_64 Fedora 44 (Py 3.14.8). Project pinned to **Python 3.13**.
-**Last updated:** 2026-10-18 (audit pass — see "Phase 6 — Audit")
+**Last updated:** 2026-10-19 (audit pass 2 — see "Phase 7 — Audit pass 2")
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
@@ -788,6 +788,67 @@ interactive parts:
   instead of the dropped `tmpfiles.d/` and `logrotate/`); the resource-budget line explains
   why logrotate was dropped.
 - `docs/BLOCKERS.md`: the four things this audit cannot verify without the target hardware.
+
+## Phase 7 — Audit pass 2 (2026-10-19)
+
+A second independent pass over the whole tree (re-read of every source file, doc-verified
+API contracts, then fixes). Two defects found and fixed, each with a red-green regression
+test or a template/styles rebuild; everything else re-fenced by the full gate.
+
+### Fixed
+
+| # | Finding | Evidence it was real | Fix |
+|---|---------|----------------------|-----|
+| 1 | `notifiers/telegram.py` treated **every HTTP 2xx as delivery success** — but the Bot API reports its own errors as HTTP 200 with Boolean `ok: false` + `description` in the body (its own module comment said "both must be treated as failures"); a mis-entered chat id would be logged as *delivered* | `core.telegram.org/bots/api` (fetched 2026-10-19): "The response contains a JSON object, which always has a Boolean field 'ok'… In case of an unsuccessful request, 'ok' equals False and the error is explained in the 'description'" | `http_transport` parses the body on 2xx: success only when `ok is True`; `ok: false` and unreadable bodies become retryable failures carrying Telegram's `description`; `retry_after` now prefers the documented body `parameters.retry_after` with the HTTP header as fallback. 5 red→green tests in `tests/test_notifiers.py` |
+| 2 | `web/templates/rules.html` still served raw structural markup (`<h2>`, `<p>`, `<article class="rule">`, notice, footer link) — the only un-styled page left after pass 1 | full-page Playwright screenshot vs every other page; `grep` class counts | restyled with the shared vocabulary (h1 page heading, emerald notice, bordered cards per rule, muted descriptions, footer link), keeping every e2e selector (`article.rule`, `data-rule-id`, `span.state`, toggle form); `app.css` rebuilt with the official v4.3.3 standalone x64 CLI (SHA-256 verified against upstream `sha256sums.txt`) — byte-identical output because every new class was already generated |
+
+### Evidence — the gate, run on the final tree
+
+```text
+$ uv sync --frozen                     → Checked 46 packages in 1ms
+$ uv run ruff check .                  → All checks passed!
+$ uv run ruff format --check .         → 77 files already formatted
+$ uv run pyright                       → 0 errors, 0 warnings, 0 informations
+$ uv run pytest                        → 385 passed, 13 deselected in 15.47s
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome
+.............                                                       [100%]
+13 passed in 18.13s
+```
+
+### Evidence — the frontend, walked again with a real browser (Playwright MCP)
+
+Real server (`GILGAMESH_DATA_DIR` temp dir, `127.0.0.1:8080`), real Chrome, synthetic
+Scapy PCAPs replayed through `gilgamesh-sensor` into the same database. Flow completed
+end to end with screenshots in `.playwright-mcp/`:
+
+first-run wizard (token → admin) → dashboard (tiles + SSE live feed) → rules
+(learning period 0 saved) → sensor replay (`demo.pcap`: port scan, two SYN floods, DNS
+spoof, seven new devices per replay round; 21 events stored across all rounds) →
+pause live feed → replay `guest.pcap`
+→ *+2 while paused* → resume flushed both → alerts list + alert detail with evidence
+table + Acknowledge → devices (trust + rename "living-room-tv") → htmx rule toggle
+(URL stayed `/rules`, state flipped `off`→`on` through the swapped control) → allowlist
+add/remove → notifications (Discord webhook saved as *configured*, input masked
+"•••• saved — leave blank to keep", **Send test** returned the real failure
+"Test failed for discord: discord returned 404") → health report → settings
+(retention 30→60 persisted) → sign out → sign in.
+
+```text
+console: 0 errors, 0 warnings across the whole tour (no CSP violations)
+```
+
+### Observations recorded (not fixed — need a project decision)
+
+- `inventory` device tracking keys on the **Ethernet source** of an ARP announcement:
+  a spoofed reply whose Ether.src is the gateway updates the gateway's address list,
+  not the attacker's. Detection is unaffected; device attribution could be sharper.
+- All `dhcp.rogue_server` events share one `dedup_key` (`dhcp_rogue|dhcp_rogue|-|-`)
+  because `src_ip` is None — two distinct rogue servers inside a cooldown aggregate
+  into one incident.
+- `docs/PLAN.md`'s tech-stack table still lists `limits` and `itsdangerous`, which the
+  runtime does not use.
+- UNVERIFIED items remain in `docs/research/09-open-questions.md` (Discord rate-limit
+  numbers, Suricata severity direction) and hardware-only items in `docs/BLOCKERS.md`.
 
 ---
 
