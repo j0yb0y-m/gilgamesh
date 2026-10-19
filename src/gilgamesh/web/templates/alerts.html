@@ -2,51 +2,63 @@
 
 {% block title %}Alerts — Gilgamesh{% endblock %}
 
+{% import "_icons.html" as icons %}
+
 {% block content %}
 <section id="alerts">
-  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Alerts</h1>
+  <div class="title-bar">
+    <div>
+      <h1 class="page-title">Alerts</h1>
+      <p class="page-sub">Every recorded event, old and new.</p>
+    </div>
+  </div>
 
-  <form method="get" action="/alerts" class="mb-4 flex flex-wrap gap-2 text-sm">
-    <select name="severity" aria-label="Severity" class="rounded border border-slate-300 px-2 py-1">
-      <option value="">Any severity</option>
-      {% for choice in severities %}
-        <option value="{{ choice }}" {% if severity == choice %}selected{% endif %}>
-          {{ choice }}
-        </option>
-      {% endfor %}
-    </select>
+  <div class="card mb-5">
+    <form method="get" action="/alerts" class="card-body flex flex-wrap items-center gap-2">
+      <select name="severity" aria-label="Severity" class="input mt-0 w-40">
+        <option value="">Any severity</option>
+        {% for choice in severities %}
+          <option value="{{ choice }}" {% if severity == choice %}selected{% endif %}>
+            {{ choice }}
+          </option>
+        {% endfor %}
+      </select>
 
-    <select name="event_type" aria-label="Type" class="rounded border border-slate-300 px-2 py-1">
-      <option value="">Any type</option>
-      {% for choice in event_types %}
-        <option value="{{ choice }}" {% if event_type == choice %}selected{% endif %}>
-          {{ choice }}
-        </option>
-      {% endfor %}
-    </select>
+      <select name="event_type" aria-label="Type" class="input mt-0 w-48">
+        <option value="">Any type</option>
+        {% for choice in event_types %}
+          <option value="{{ choice }}" {% if event_type == choice %}selected{% endif %}>
+            {{ choice }}
+          </option>
+        {% endfor %}
+      </select>
 
-    <input
-      type="search"
-      name="search"
-      value="{{ search }}"
-      placeholder="Search summaries"
-      aria-label="Search"
-      class="rounded border border-slate-300 px-2 py-1"
-    />
-    <button type="submit" class="rounded bg-slate-900 px-3 py-1 text-sm text-white">Filter</button>
-  </form>
+      <label class="relative mt-0 min-w-56 flex-1">
+        <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">
+          {{ icons.icon("search") }}
+        </span>
+        <input
+          type="search"
+          name="search"
+          value="{{ search }}"
+          placeholder="Search summaries"
+          aria-label="Search"
+          class="input mt-0 pl-8"
+        />
+      </label>
+      <button type="submit" class="btn btn-primary mt-0">{{ icons.icon("search") }}Filter</button>
+    </form>
+  </div>
 
   {% if events %}
-    <ul class="divide-y divide-slate-200 rounded border border-slate-200">
+    <ul class="card overflow-hidden">
       {% for event in events %}
-        <li class="p-3" data-event-id="{{ event.id }}" data-severity="{{ event.severity }}">
-          <a class="flex items-baseline gap-3" href="/alerts/{{ event.id }}">
-            <span class="w-20 shrink-0 text-xs font-semibold uppercase text-slate-500">
-              {{ event.severity }}
-            </span>
-            <span class="w-32 shrink-0 text-xs text-slate-500">{{ event.type }}</span>
-            <span class="flex-1 text-sm text-slate-900">{{ event.summary }}</span>
-            <time class="shrink-0 text-xs text-slate-400" datetime="{{ event.ts.isoformat() }}">
+        <li class="feed-row" data-event-id="{{ event.id }}" data-severity="{{ event.severity }}">
+          <a href="/alerts/{{ event.id }}">
+            <span class="badge badge-{{ event.severity }}">{{ event.severity }}</span>
+            <span class="feed-row-type">{{ event.type }}</span>
+            <span class="feed-row-summary">{{ event.summary }}</span>
+            <time class="feed-row-time" datetime="{{ event.ts.isoformat() }}">
               {{ event.ts.isoformat(timespec="seconds") }}
             </time>
           </a>
@@ -54,7 +66,12 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p class="text-sm text-slate-500">No alerts match these filters.</p>
+    <div class="card">
+      <div class="empty-state">
+        <span class="empty-icon">{{ icons.icon("search") }}</span>
+        No alerts match these filters.
+      </div>
+    </div>
   {% endif %}
 </section>
 {% endblock %}

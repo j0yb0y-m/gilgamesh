@@ -2,96 +2,109 @@
 
 {% block title %}Devices — Gilgamesh{% endblock %}
 
+{% import "_icons.html" as icons %}
+
 {% block content %}
 <section id="devices">
-  <div class="mb-4 flex items-baseline justify-between">
-    <h1 class="text-2xl font-semibold text-slate-900">Devices</h1>
-    <span class="text-sm text-slate-500">{{ total }} seen</span>
+  <div class="title-bar">
+    <div>
+      <h1 class="page-title">Devices</h1>
+      <p class="page-sub">
+        Seen on the network. Trusting a device tells the detectors it is yours —
+        it never hides the device or silences its alerts.
+      </p>
+    </div>
+    <span class="pill pill-muted">{{ total }} seen</span>
   </div>
 
   {% if notice %}
-    <p role="status" class="mb-4 rounded border border-emerald-300 bg-emerald-50 p-2 text-emerald-800">
+    <p role="status" class="notice notice-ok mb-4">
+      {{ icons.icon("circle-check") }}
       {{ notice }}
     </p>
   {% endif %}
 
-  <p class="mb-4 text-sm text-slate-600">
-    Devices the sensor has seen on the network. Trusting a device tells the detectors it
-    is yours; it never hides the device or silences its alerts.
-  </p>
-
-  <nav class="mb-4 flex gap-3 text-sm">
-    <a class="underline {% if not show %}font-semibold{% endif %}" href="/devices">All</a>
-    <a class="underline {% if show == 'untrusted' %}font-semibold{% endif %}" href="/devices?show=untrusted">Untrusted</a>
-    <a class="underline {% if show == 'trusted' %}font-semibold{% endif %}" href="/devices?show=trusted">Trusted</a>
-  </nav>
+  <div class="mb-4 flex gap-1 text-[12.5px]">
+    {#- The tab strip marks the active view with the same design tokens as the main
+        nav; plain links, so it works without JavaScript and keyboard-order naturally. -#}
+    <a class="nav-link {% if not show %}bg-slate-200/70 font-semibold text-slate-900{% endif %}" href="/devices">All</a>
+    <a class="nav-link {% if show == 'untrusted' %}bg-slate-200/70 font-semibold text-slate-900{% endif %}" href="/devices?show=untrusted">Untrusted</a>
+    <a class="nav-link {% if show == 'trusted' %}bg-slate-200/70 font-semibold text-slate-900{% endif %}" href="/devices?show=trusted">Trusted</a>
+    <span class="flex-1"></span>
+    <a class="link pt-1.5" href="/suppressions">{{ icons.icon("shield-check") }}Allowlist</a>
+  </div>
 
   {% if devices %}
-    <table class="w-full border-collapse text-sm">
-      <thead>
-        <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
-          <th class="py-2 pr-3">Device</th>
-          <th class="py-2 pr-3">Addresses</th>
-          <th class="py-2 pr-3">Last seen</th>
-          <th class="py-2 pr-3">Status</th>
-          <th class="py-2">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for device in devices %}
-          <tr class="border-b border-slate-100 align-top">
-            <td class="py-2 pr-3">
-              {% if device.hostname %}
-                <span class="font-medium text-slate-900">{{ device.hostname }}</span><br />
-              {% endif %}
-              <code class="text-xs text-slate-500">{{ device.mac }}</code>
-              {% if device.randomised %}
-                <span class="ml-2 rounded bg-amber-100 px-1 text-xs text-amber-800">randomised</span>
-              {% endif %}
-            </td>
-            <td class="py-2 pr-3 text-slate-700">
-              {% if device.ips %}{{ device.ips | join(", ") }}{% else %}—{% endif %}
-            </td>
-            <td class="py-2 pr-3 text-slate-500">{{ device.last_ts.isoformat(timespec="seconds") }}</td>
-            <td class="py-2 pr-3">
-              {% if device.trusted %}
-                <span class="rounded bg-emerald-100 px-1 text-xs text-emerald-800">trusted</span>
-              {% else %}
-                <span class="text-xs text-slate-500">unknown</span>
-              {% endif %}
-            </td>
-            <td class="py-2">
-              <div class="flex flex-col gap-1">
-                <form method="post" action="/devices/{{ device.mac }}/trust">
-                  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
-                  <input type="hidden" name="trusted" value="{% if device.trusted %}0{% else %}1{% endif %}" />
-                  <button type="submit" class="rounded border border-slate-300 px-2 py-1 text-xs">
-                    {% if device.trusted %}Untrust{% else %}Trust{% endif %}
-                  </button>
-                </form>
-                <form method="post" action="/devices/{{ device.mac }}/rename" class="flex gap-1">
-                  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
-                  <input
-                    type="text"
-                    name="hostname"
-                    value="{{ device.hostname or '' }}"
-                    placeholder="name"
-                    class="w-28 rounded border border-slate-300 px-1 py-1 text-xs"
-                  />
-                  <button type="submit" class="rounded border border-slate-300 px-2 py-1 text-xs">
-                    Rename
-                  </button>
-                </form>
-              </div>
-            </td>
+    <div class="card overflow-x-auto">
+      <table class="table w-full">
+        <thead>
+          <tr>
+            <th>Device</th>
+            <th>Addresses</th>
+            <th>Last seen</th>
+            <th>Status</th>
+            <th>Actions</th>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {% for device in devices %}
+            <tr>
+              <td>
+                {% if device.hostname %}
+                  <span class="font-semibold text-slate-900">{{ device.hostname }}</span><br />
+                {% endif %}
+                <span class="mono text-slate-500">{{ device.mac }}</span>
+                {% if device.randomised %}
+                  <span class="pill pill-warn ml-1">randomised</span>
+                {% endif %}
+              </td>
+              <td class="mono text-slate-700">
+                {% if device.ips %}{{ device.ips | join(", ") }}{% else %}—{% endif %}
+              </td>
+              <td class="whitespace-nowrap text-slate-500">
+                {{ device.last_ts.isoformat(timespec="seconds") }}
+              </td>
+              <td>
+                {% if device.trusted %}
+                  <span class="pill pill-trusted">trusted</span>
+                {% else %}
+                  <span class="text-[11px] text-slate-500">unknown</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="flex flex-col gap-1.5">
+                  <form method="post" action="/devices/{{ device.mac }}/trust">
+                    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+                    <input type="hidden" name="trusted" value="{% if device.trusted %}0{% else %}1{% endif %}" />
+                    <button type="submit" class="btn btn-ghost btn-sm">
+                      {% if device.trusted %}Untrust{% else %}Trust{% endif %}
+                    </button>
+                  </form>
+                  <form method="post" action="/devices/{{ device.mac }}/rename" class="flex gap-1.5">
+                    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+                    <input
+                      type="text"
+                      name="hostname"
+                      value="{{ device.hostname or '' }}"
+                      placeholder="name"
+                      class="input mt-0 w-28 px-2 py-1 text-[11.5px]"
+                    />
+                    <button type="submit" class="btn btn-ghost btn-sm">{{ icons.icon("pencil") }}<span class="sr-only">Rename</span></button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   {% else %}
-    <p class="rounded border border-slate-200 p-3 text-sm text-slate-500">
-      No devices seen yet. They appear here as soon as the sensor observes traffic.
-    </p>
+    <div class="card">
+      <div class="empty-state">
+        <span class="empty-icon">{{ icons.icon("monitor") }}</span>
+        No devices seen yet. They appear here as soon as the sensor observes traffic.
+      </div>
+    </div>
   {% endif %}
 </section>
 {% endblock %}

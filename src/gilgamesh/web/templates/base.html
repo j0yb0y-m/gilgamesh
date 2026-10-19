@@ -26,40 +26,75 @@
     <script src="/static/js/vendor/htmx.min.js?v={{ asset_version }}" defer></script>
     <script src="/static/js/vendor/alpine-csp.min.js?v={{ asset_version }}" defer></script>
   </head>
-  <body hx-headers='{"X-CSRF-Token": "{{ session.csrf_token if session else "" }}"}'>
-    <header class="border-b border-slate-200 bg-slate-50">
-      <div class="mx-auto flex max-w-5xl items-center justify-between p-4">
-        <a href="/" class="text-lg font-semibold text-slate-900">Gilgamesh</a>
+  <body hx-headers='{"X-CSRF-Token": "{{ session.csrf_token if session else "" }}" }'>
+    {#- The icon sprite is defined once here; every page renders icons with the
+        `icon()` macro from _icons.html and only the <use> reference travels inside. -#}
+    {% import "_icons.html" as icons %}
+    {{ icons.sprite() }}
+    <a
+      class="sr-only rounded bg-white px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50"
+      href="#main"
+    >
+      Skip to content
+    </a>
+
+    {#- The header is the instrument panel: brand, labelled primary nav with the active
+        page marked for assistive tech (and styled via [aria-current="page"] in CSS),
+        the signed-in identity, and the sign-out affordance. #}
+    <header class="site-header">
+      <div class="site-shell flex items-center justify-between gap-3 py-3">
+        <a href="/" class="brand">
+          <span class="brand-mark">{{ icons.icon("shield") }}</span>
+          Gilgamesh
+        </a>
         {% if session %}
-          <nav class="flex items-center gap-4 text-sm">
-            <a class="text-slate-700 hover:text-slate-900" href="/">Dashboard</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/alerts">Alerts</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/devices">Devices</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/rules">Rules</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/suppressions">Allowlist</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/notifications">Alerts out</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/health">Health</a>
-            <a class="text-slate-700 hover:text-slate-900" href="/settings">Settings</a>
+          <nav class="site-nav" aria-label="Primary">
+            {% set nav_items = [
+              ("layout-dashboard", "Dashboard", "/"),
+              ("bell", "Alerts", "/alerts"),
+              ("monitor", "Devices", "/devices"),
+              ("sliders-horizontal", "Rules", "/rules"),
+              ("shield-check", "Allowlist", "/suppressions"),
+              ("send", "Alerts out", "/notifications"),
+              ("heart-pulse", "Health", "/health"),
+              ("settings", "Settings", "/settings"),
+            ] %}
+            {% for icon_name, label, href in nav_items %}
+              <a
+                href="{{ href }}"
+                class="nav-link"
+                {#- The link's accessible name must survive the phone breakpoint, where CSS
+                    hides the visible label span (display:none removes it from the
+                    accessibility tree too) — so the name is stated on the link itself. -#}
+                aria-label="{{ label }}"
+                {% if request.url.path == href %}aria-current="page"{% endif %}
+              >
+                {{ icons.icon(icon_name) }}
+                <span>{{ label }}</span>
+              </a>
+            {% endfor %}
+          </nav>
+          <div class="flex items-center gap-2.5">
+            <span class="user-chip"><span class="avatar-dot">{{ session.user.username[0] }}</span>{{ session.user.username }}</span>
             <form method="post" action="/logout">
               <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
-              <button
-                type="submit"
-                class="rounded border border-slate-300 px-2 py-1 text-slate-700"
-              >
-                Sign out
+              <button type="submit" class="btn btn-ghost btn-sm">
+                {{ icons.icon("log-out") }}
+                <span>Sign out</span>
               </button>
             </form>
-          </nav>
+          </div>
         {% endif %}
       </div>
     </header>
 
-    <main class="mx-auto max-w-5xl p-4">
+    <main class="site-shell py-6" id="main">
       {#- The base context is shared with every page template, so this is the single
           place the "error" flash is rendered; pages must not repeat it or the
           banner appears twice (strict-mode E2E selectors enforce this). #}
       {% if error %}
-        <p role="alert" class="mb-4 rounded border border-red-300 bg-red-50 p-2 text-red-800">
+        <p role="alert" class="notice notice-error mb-4">
+          {{ icons.icon("triangle-alert") }}
           {{ error }}
         </p>
       {% endif %}

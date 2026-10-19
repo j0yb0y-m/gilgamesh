@@ -20,28 +20,35 @@
   const MAX_BUFFERED = 200;
   const feed = document.getElementById("live-feed");
 
-  /** Build one feed row, matching the server-rendered <li> element for element. */
+  /** Build one feed row, matching the server-rendered <li> element for element.
+   *
+   * The badge markup mirrors dashboard.html: the severity class is what colours the
+   * pill, so an unknown severity degrades to the neutral info badge instead of an
+   * unstyled one.
+   */
+  const SEVERITIES = new Set(["info", "low", "medium", "high", "critical"]);
+
   function buildItem(event) {
     const item = document.createElement("li");
-    item.className = "event p-3";
+    const severity = SEVERITIES.has(event.severity) ? event.severity : "info";
+    item.className = "event feed-row";
     item.dataset.eventId = event.id;
-    item.dataset.severity = event.severity;
+    item.dataset.severity = severity;
 
     const link = document.createElement("a");
-    link.className = "flex items-baseline gap-3";
     link.href = `/alerts/${encodeURIComponent(event.id)}`;
 
-    for (const [name, value, styles] of [
-      [
-        "event-severity",
-        event.severity,
-        "w-20 shrink-0 text-xs font-semibold uppercase text-slate-500",
-      ],
-      ["event-type", event.type, "w-32 shrink-0 text-xs text-slate-500"],
-      ["event-summary", event.summary, "flex-1 text-sm text-slate-900"],
+    const badge = document.createElement("span");
+    badge.className = `badge badge-${severity}`;
+    badge.textContent = severity; // textContent, never innerHTML: no XSS from the feed.
+    link.appendChild(badge);
+
+    for (const [name, value] of [
+      ["feed-row-type", event.type],
+      ["feed-row-summary", event.summary],
     ]) {
       const span = document.createElement("span");
-      span.className = `${name} ${styles}`;
+      span.className = name;
       span.textContent = value; // textContent, never innerHTML: no XSS from the feed.
       link.appendChild(span);
     }
@@ -50,7 +57,7 @@
       const parsed = new Date(event.ts);
       if (!Number.isNaN(parsed.getTime())) {
         const time = document.createElement("time");
-        time.className = "shrink-0 text-xs text-slate-400";
+        time.className = "feed-row-time";
         time.dateTime = event.ts;
         // Seconds precision in UTC, the same shape the template prints server-side.
         time.textContent = `${parsed.toISOString().slice(0, 19)}+00:00`;
@@ -66,6 +73,17 @@
     while (feed.children.length > MAX_BUFFERED) {
       feed.lastElementChild.remove();
     }
+  }
+
+  /** Drop the server-rendered empty-state row before the first live item lands,
+   * so the card never shows "Nothing recorded yet" and real events together. */
+  function insertLive(item) {
+    const empty = feed.querySelector(".empty-state");
+    if (empty) {
+      empty.remove();
+    }
+    feed.prepend(item);
+    trim();
   }
 
   function connectLiveFeed() {
@@ -96,8 +114,7 @@
         announcePending();
         return;
       }
-      feed.prepend(buildItem(event));
-      trim();
+      insertLive(buildItem(event));
     });
 
     document.addEventListener("gilgamesh:feed-paused", (message) => {
@@ -107,9 +124,8 @@
       }
       // Newest first, and never more than the buffer holds.
       for (const event of buffered.splice(0).reverse()) {
-        feed.prepend(buildItem(event));
+        insertLive(buildItem(event));
       }
-      trim();
       announcePending();
     });
 

@@ -2,99 +2,107 @@
 
 {% block title %}Detection rules — Gilgamesh{% endblock %}
 
+{% import "_icons.html" as icons %}
+
 {% block content %}
 <section id="rules">
-  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Detection rules</h1>
-
-  <p class="mb-4 text-sm text-slate-600">
-    These are the checks Gilgamesh runs. You can switch any of them off or adjust its
-    thresholds. Suppressing something here only affects that rule — alerts about the
-    same device from other rules still appear.
-  </p>
+  <div class="title-bar">
+    <div>
+      <h1 class="page-title">Detection rules</h1>
+      <p class="page-sub">
+        These are the checks Gilgamesh runs. Switch any of them off or adjust its
+        thresholds — suppressing one rule never silences other rules about the same device.
+      </p>
+    </div>
+  </div>
 
   {% if notice %}
-    <p role="status" class="mb-4 rounded border border-emerald-300 bg-emerald-50 p-2 text-emerald-800">
+    <p role="status" class="notice notice-ok mb-4">
+      {{ icons.icon("circle-check") }}
       {{ notice }}
     </p>
   {% endif %}
 
-  {% for item in rules %}
-    <article
-      class="rule mb-4 rounded border border-slate-200 p-4"
-      data-rule-id="{{ item.definition.id }}"
-    >
-      <h2 class="text-lg font-semibold text-slate-900">{{ item.definition.name }}</h2>
-      <p class="mb-3 text-sm text-slate-600">{{ item.definition.description }}</p>
+  <div class="grid gap-4">
+    {% for item in rules %}
+      <article
+        class="rule card"
+        data-rule-id="{{ item.definition.id }}"
+      >
+        <div class="card-header">
+          <h2 class="card-title">{{ item.definition.name }}</h2>
+          <div class="ml-auto">{% include "_rule_toggle.html" %}</div>
+        </div>
+        <div class="card-body">
+          <p class="text-[12.5px] text-slate-600">{{ item.definition.description }}</p>
 
-      {% include "_rule_toggle.html" %}
-
-      {% if item.definition.params %}
-        <form method="post" action="/rules/params" class="mt-3 flex flex-wrap items-end gap-4 text-sm">
-          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
-          <input type="hidden" name="rule_id" value="{{ item.definition.id }}" />
-          {% for spec in item.definition.params %}
-            {% if spec.kind == "bool" %}
-              <div class="flex items-center gap-2">
-                <input
-                  id="{{ item.definition.id }}-{{ spec.name }}"
-                  name="{{ spec.name }}"
-                  type="checkbox"
-                  class="rounded border-slate-300"
-                  {% if item.setting.params[spec.name] %}checked{% endif %}
-                />
-                <label class="text-sm" for="{{ item.definition.id }}-{{ spec.name }}">
-                  {{ spec.label or spec.name }}
-                </label>
-              </div>
-            {% elif spec.kind == "enum" %}
-              <div>
-                <label class="text-sm" for="{{ item.definition.id }}-{{ spec.name }}">
-                  {{ spec.label or spec.name }}
-                </label>
-                <select
-                  id="{{ item.definition.id }}-{{ spec.name }}"
-                  name="{{ spec.name }}"
-                  class="mt-1 block rounded border border-slate-300 px-2 py-1"
-                >
-                  {% for choice in spec.choices %}
-                    <option
-                      value="{{ choice }}"
-                      {% if item.setting.params[spec.name] == choice %}selected{% endif %}
+          {% if item.definition.params %}
+            <form method="post" action="/rules/params" class="mt-3 flex flex-wrap items-end gap-4 text-[12.5px]">
+              <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+              <input type="hidden" name="rule_id" value="{{ item.definition.id }}" />
+              {% for spec in item.definition.params %}
+                {% if spec.kind == "bool" %}
+                  <div class="flex items-center gap-2">
+                    <input
+                      id="{{ item.definition.id }}-{{ spec.name }}"
+                      name="{{ spec.name }}"
+                      type="checkbox"
+                      class="check"
+                      {% if item.setting.params[spec.name] %}checked{% endif %}
+                    />
+                    <label class="block text-[12.5px]" for="{{ item.definition.id }}-{{ spec.name }}">
+                      {{ spec.label or spec.name }}
+                    </label>
+                  </div>
+                {% elif spec.kind == "enum" %}
+                  <div>
+                    <label class="field" for="{{ item.definition.id }}-{{ spec.name }}">
+                      {{ spec.label or spec.name }}
+                    </label>
+                    <select
+                      id="{{ item.definition.id }}-{{ spec.name }}"
+                      name="{{ spec.name }}"
+                      class="input mt-1 w-40"
                     >
-                      {{ choice }}
-                    </option>
-                  {% endfor %}
-                </select>
-              </div>
-            {% else %}
-              <div>
-                <label class="text-sm" for="{{ item.definition.id }}-{{ spec.name }}">
-                  {{ spec.label or spec.name }}
-                </label>
-                <input
-                  id="{{ item.definition.id }}-{{ spec.name }}"
-                  name="{{ spec.name }}"
-                  type="number"
-                  step="{{ 1 if spec.kind == 'int' else 'any' }}"
-                  {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
-                  {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}
-                  value="{{ item.setting.params[spec.name] }}"
-                  class="mt-1 block w-32 rounded border border-slate-300 px-2 py-1"
-                />
-              </div>
-            {% endif %}
-            {% if spec.help %}<span class="w-full text-xs text-slate-500">{{ spec.help }}</span>{% endif %}
-          {% endfor %}
-          <button type="submit" class="rounded border border-slate-300 px-3 py-1 text-sm">
-            Save thresholds
-          </button>
-        </form>
-      {% endif %}
-    </article>
-  {% endfor %}
+                      {% for choice in spec.choices %}
+                        <option
+                          value="{{ choice }}"
+                          {% if item.setting.params[spec.name] == choice %}selected{% endif %}
+                        >
+                          {{ choice }}
+                        </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                {% else %}
+                  <div>
+                    <label class="field" for="{{ item.definition.id }}-{{ spec.name }}">
+                      {{ spec.label or spec.name }}
+                    </label>
+                    <input
+                      id="{{ item.definition.id }}-{{ spec.name }}"
+                      name="{{ spec.name }}"
+                      type="number"
+                      step="{{ 1 if spec.kind == 'int' else 'any' }}"
+                      {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
+                      {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}
+                      value="{{ item.setting.params[spec.name] }}"
+                      class="input mt-1 w-32"
+                    />
+                  </div>
+                {% endif %}
+                {% if spec.help %}<span class="field-hint w-full">{{ spec.help }}</span>{% endif %}
+              {% endfor %}
+              <button type="submit" class="btn btn-ghost mt-2">{{ icons.icon("check") }}Save thresholds</button>
+            </form>
+          {% endif %}
+        </div>
+      </article>
+    {% endfor %}
+  </div>
 
-  <p class="mt-6 text-sm">
-    <a class="underline" href="/suppressions">Manage the allowlist</a>
+  <p class="mt-6 text-[12.5px]">
+    <a class="link" href="/suppressions">{{ icons.icon("shield-check") }} Manage the allowlist</a>
   </p>
 </section>
 {% endblock %}

@@ -2,78 +2,106 @@
 
 {% block title %}Dashboard — Gilgamesh{% endblock %}
 
+{% import "_icons.html" as icons %}
+
 {% block content %}
 <section id="tiles" class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-  <div class="rounded border border-slate-200 bg-white p-3">
-    <p class="text-xs uppercase tracking-wide text-slate-500">Alerts today</p>
-    <p class="text-2xl font-semibold text-slate-900">{{ stats.events_today }}</p>
+  <div class="tile">
+    <div class="flex items-center justify-between">
+      <span class="tile-label">Alerts today</span>
+      <span class="tile-icon red">{{ icons.icon("triangle-alert") }}</span>
+    </div>
+    <p class="tile-value">{{ stats.events_today }}</p>
+    <p class="tile-caption">{{ stats.events_total }} recorded in total</p>
   </div>
-  <div class="rounded border border-slate-200 bg-white p-3">
-    <p class="text-xs uppercase tracking-wide text-slate-500">Alerts total</p>
-    <p class="text-2xl font-semibold text-slate-900">{{ stats.events_total }}</p>
+  <div class="tile">
+    <div class="flex items-center justify-between">
+      <span class="tile-label">Alerts total</span>
+      <span class="tile-icon blue">{{ icons.icon("clock") }}</span>
+    </div>
+    <p class="tile-value">{{ stats.events_total }}</p>
   </div>
-  <a href="/devices" class="rounded border border-slate-200 bg-white p-3 hover:border-slate-400">
-    <p class="text-xs uppercase tracking-wide text-slate-500">Devices</p>
-    <p class="text-2xl font-semibold text-slate-900">{{ stats.devices }}</p>
+  <a href="/devices" class="tile">
+    <div class="flex items-center justify-between">
+      <span class="tile-label">Devices</span>
+      <span class="tile-icon blue">{{ icons.icon("monitor") }}</span>
+    </div>
+    <p class="tile-value">{{ stats.devices }}</p>
+    <p class="tile-caption flex items-center gap-1">View inventory {{ icons.icon("chevron-right") }}</p>
   </a>
-  <a href="/health" class="rounded border border-slate-200 bg-white p-3 hover:border-slate-400">
-    <p class="text-xs uppercase tracking-wide text-slate-500">System</p>
-    <p class="text-sm font-medium text-slate-900">Health →</p>
+  <a href="/health" class="tile">
+    <div class="flex items-center justify-between">
+      <span class="tile-label">System</span>
+      <span class="tile-icon green">{{ icons.icon("heart-pulse") }}</span>
+    </div>
+    <p class="tile-value text-base">Health</p>
+    <p class="tile-caption flex items-center gap-1">Open the report {{ icons.icon("chevron-right") }}</p>
   </a>
 </section>
 
 <section id="events" x-data="liveFeed">
-  <div class="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-    <h1 class="text-2xl font-semibold text-slate-900">Recent activity</h1>
-    <div class="flex items-center gap-3 text-sm">
+  <div class="title-bar">
+    <div>
+      <h1 class="page-title">Recent activity</h1>
+      <p class="page-sub">Every event the detectors raise, as it happens.</p>
+    </div>
+    <div class="flex items-center gap-2.5">
       {#- The pause control is an Alpine CSP component registered in app.js: the feed fills
           in while the owner is reading it, and pausing is a client-side decision. It is
           progressive enhancement — without JavaScript the feed still renders server-side,
-          only the button does nothing. -#}
-      <span id="feed-state" class="text-xs font-semibold uppercase text-slate-500" x-text="indicatorLabel">Live</span>
-      {#- `:hidden` rather than `x-show`: x-show writes an inline style, and this CSP has
-          no `unsafe-inline` for styles. The hidden attribute is plain HTML. -#}
-      <span id="feed-buffered" class="text-xs text-amber-700" :hidden="noBuffered" x-text="bufferedLabel"></span>
+          only the button does nothing. `x-text` lives on the inner <span>, not the
+          button, so the static icon survives the label swap. -#}
       <button
         type="button"
         id="feed-toggle"
-        class="rounded border border-slate-300 px-2 py-1 text-slate-700 hover:border-slate-400"
+        class="btn btn-ghost btn-sm"
         @click="toggle"
-        x-text="buttonLabel"
       >
-        Pause live feed
+        {{ icons.icon("pause") }}
+        <span x-text="buttonLabel">Pause live feed</span>
       </button>
-      <a class="text-slate-600 underline" href="/alerts">See all alerts</a>
+      {#- `:hidden` rather than `x-show`: x-show writes an inline style, and this CSP has
+          no `unsafe-inline` for styles. The hidden attribute is plain HTML. -#}
+      <span id="feed-buffered" class="badge badge-medium" hidden :hidden="noBuffered" x-text="bufferedLabel"></span>
+      <a class="link text-[12.5px]" href="/alerts">See all alerts</a>
     </div>
   </div>
 
-  <ul id="live-feed" class="divide-y divide-slate-200 rounded border border-slate-200">
-    {% for event in events %}
-      <li class="event p-3" data-event-id="{{ event.id }}" data-severity="{{ event.severity }}">
-        <a class="flex items-baseline gap-3" href="/alerts/{{ event.id }}">
-          <span
-            class="event-severity w-20 shrink-0 text-xs font-semibold uppercase text-slate-500"
-          >
-            {{ event.severity }}
-          </span>
-          <span class="event-type w-32 shrink-0 text-xs text-slate-500">
-            {{ event.type }}
-          </span>
-          <span class="event-summary flex-1 text-sm text-slate-900">{{ event.summary }}</span>
-          <time class="shrink-0 text-xs text-slate-400" datetime="{{ event.ts.isoformat() }}">
-            {{ event.ts.isoformat(timespec="seconds") }}
-          </time>
-        </a>
-      </li>
-    {% else %}
-      <li class="p-3 text-sm text-slate-500">
-        Nothing recorded yet. Alerts appear here the moment they are detected.
-      </li>
-    {% endfor %}
-  </ul>
+  <div class="card overflow-hidden">
+    <div class="card-header">
+      <h2 class="card-title">Live feed</h2>
+      {#- The state chip mirrors the SSE connection: green while streaming, amber while
+          reconnecting, grey when the stream is gone (app.js → body[data-stream] → CSS). -#}
+      <span id="feed-state" class="live-chip">
+        <i class="live-dot"></i>
+        <span x-text="indicatorLabel">Live</span>
+      </span>
+    </div>
 
-  <p class="mt-2 text-xs text-slate-400">
-    This page updates itself over a server-sent event stream — no refresh needed.
-  </p>
+    <ul id="live-feed">
+      {% for event in events %}
+        <li class="event feed-row" data-event-id="{{ event.id }}" data-severity="{{ event.severity }}">
+          <a href="/alerts/{{ event.id }}">
+            <span class="badge badge-{{ event.severity }}">{{ event.severity }}</span>
+            <span class="feed-row-type">{{ event.type }}</span>
+            <span class="feed-row-summary">{{ event.summary }}</span>
+            <time class="feed-row-time" datetime="{{ event.ts.isoformat() }}">
+              {{ event.ts.isoformat(timespec="seconds") }}
+            </time>
+          </a>
+        </li>
+      {% else %}
+        <li class="empty-state">
+          <span class="empty-icon">{{ icons.icon("bell") }}</span>
+          Nothing recorded yet. Alerts appear here the moment they are detected.
+        </li>
+      {% endfor %}
+    </ul>
+
+    <div class="card-footer">
+      <span>This page updates itself over a server-sent event stream — no refresh needed.</span>
+      <span>buffer · 200 items</span>
+    </div>
+  </div>
 </section>
 {% endblock %}

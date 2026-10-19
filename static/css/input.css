@@ -6,6 +6,14 @@
  *
  * Rebuild with the standalone CLI after editing templates:
  *   tailwindcss build -i static/css/input.css -o static/css/app.css
+ *
+ * The "Instrument — light" design system lives in the @theme block (tokens) and the
+ * @layer components block below. Its contract:
+ *   - severity colour language: .badge-* on rows/pages, [data-severity] rules on feeds;
+ *   - everything expressible as classes — the CSP bans inline style= (style-src 'self');
+ *   - purple-free: interaction accent = blue, semantics = severity palette.
+ * tests/test_design_system.py asserts the built output actually contains the core
+ * selectors, so a forgotten rebuild is a red test, not a silently stale stylesheet.
  */
 
 @import "tailwindcss";
@@ -13,3 +21,391 @@
 /* Gilgamesh scans its own templates for class names — no config file, no safelist. */
 @source "../../src/gilgamesh/web/templates/**/*.html";
 @source "../../src/gilgamesh/web/**/*.py";
+
+@theme {
+  /* Interaction accent (buttons, links, focus) — deliberately neutral to the
+   * severity palette, which must stay the loudest color on screen. */
+  --color-accent-blue: #2563eb;
+
+  /* The severity scale, darkest-reading-text plus its rule/badge tints. */
+  --color-sev-critical: #ef4444;
+  --color-sev-high: #f97316;
+  --color-sev-medium: #f59e0b;
+  --color-sev-low: #0ea5e9;
+  --color-sev-info: #94a3b8;
+}
+
+@layer components {
+  /* ===== sprites and icons ================================================ */
+
+  /* The sprite container must never paint; <use> still resolves into display:none. */
+  .sprite {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+  }
+
+  /* Scales with the font-size of its container: 1em everywhere. */
+  .icon {
+    /* Inline-block rather than block: the sprite sits beside text in headings and
+       links ("⚙ Deployment", "Manage the allowlist"), where a block-level svg would
+       push the words to the next line. Flex wrappers (buttons, nav, chips) are
+       unaffected — blockified there regardless of display. */
+    display: inline-block;
+    vertical-align: -0.125em;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* ===== header =========================================================== */
+
+  .site-header {
+    @apply sticky top-0 z-20 border-b border-slate-200 bg-white;
+  }
+
+  .site-shell {
+    @apply mx-auto w-full max-w-5xl px-4;
+  }
+
+  .brand {
+    @apply flex items-center gap-2 text-[15px] font-bold tracking-tight text-slate-900;
+  }
+
+  .brand-mark {
+    @apply flex size-6 items-center justify-center rounded-lg bg-blue-50 text-blue-600;
+  }
+
+  .site-nav {
+    @apply flex min-w-0 flex-1 gap-1 overflow-x-auto py-0 lg:py-0;
+    scrollbar-width: none;
+  }
+  .site-nav::-webkit-scrollbar {
+    display: none;
+  }
+  @media (max-width: 639px) {
+    .site-nav {
+      flex-wrap: nowrap;
+    }
+    .site-nav .nav-link span {
+      display: none; /* icons only on a phone; the link keeps its name via aria-label */
+    }
+  }
+
+  .nav-link {
+    @apply flex items-center gap-1 whitespace-nowrap rounded-lg px-2 py-1.5 text-[13px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+  .nav-link[aria-current="page"] {
+    @apply bg-slate-200/70 font-semibold text-slate-900 hover:bg-slate-200/70;
+  }
+  .nav-link .icon {
+    font-size: 14px;
+  }
+
+  .user-chip {
+    @apply hidden flex items-center gap-2 text-[12px] text-slate-500 sm:flex;
+  }
+  .avatar-dot {
+    @apply flex size-5 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600;
+  }
+
+  .live-chip {
+    @apply inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800;
+  }
+  .live-dot {
+    @apply size-1.5 rounded-full bg-emerald-500;
+    box-shadow: 0 0 5px 1px rgba(16, 185, 129, 0.55);
+    animation: live-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes live-pulse {
+    50% {
+      opacity: 0.4;
+    }
+  }
+
+  /* The SSE state travels on <body> (app.js sets data-stream). */
+  [data-stream="reconnecting"] .live-chip {
+    @apply border-amber-200 bg-amber-50 text-amber-800;
+  }
+  [data-stream="reconnecting"] .live-dot {
+    @apply bg-amber-500;
+    box-shadow: none;
+    animation-duration: 0.7s;
+  }
+  [data-stream="disconnected"] .live-chip {
+    @apply border-slate-200 bg-slate-100 text-slate-500;
+  }
+  [data-stream="disconnected"] .live-dot {
+    @apply bg-slate-400;
+    box-shadow: none;
+    animation: none;
+  }
+
+  /* ===== page titles ====================================================== */
+
+  .title-bar {
+    @apply mb-5 flex flex-wrap items-end justify-between gap-3;
+  }
+  .page-title {
+    @apply text-xl font-bold tracking-tight text-slate-900;
+  }
+  .page-sub {
+    @apply mt-0.5 text-xs text-slate-500;
+  }
+
+  /* ===== cards and tiles =================================================== */
+
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-xs;
+  }
+  .card-header {
+    @apply flex items-center gap-2.5 border-b border-slate-100 px-3.5 py-2.5;
+  }
+  .card-title {
+    @apply text-[13px] font-semibold text-slate-900;
+  }
+  .card-body {
+    @apply px-3.5 py-3;
+  }
+  .card-footer {
+    @apply flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-3.5 py-2 text-[11px] text-slate-400;
+  }
+
+  .tile {
+    @apply rounded-xl border border-slate-200 bg-white p-3.5 shadow-xs;
+  }
+  .tile-label {
+    @apply text-[11px] font-semibold tracking-[0.06em] text-slate-500;
+  }
+  .tile-value {
+    @apply mt-1 text-xl font-bold tracking-tight text-slate-900;
+  }
+  .tile-caption {
+    @apply mt-0.5 text-[11px] text-slate-400;
+  }
+  .tile-icon {
+    @apply flex size-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500;
+  }
+  .tile-icon.red {
+    @apply bg-rose-50 text-rose-600;
+  }
+  .tile-icon.blue {
+    @apply bg-blue-50 text-blue-600;
+  }
+  .tile-icon.green {
+    @apply bg-emerald-50 text-emerald-600;
+  }
+  a.tile {
+    @apply transition-colors hover:border-slate-400;
+  }
+
+  /* ===== severity badges ================================================== */
+
+  .badge {
+    @apply inline-flex min-w-14 items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] uppercase;
+  }
+  .badge-critical {
+    @apply border-rose-200 bg-rose-50 text-rose-700;
+  }
+  .badge-high {
+    @apply border-orange-200 bg-orange-50 text-orange-700;
+  }
+  .badge-medium {
+    @apply border-amber-200 bg-amber-50 text-amber-700;
+  }
+  .badge-low {
+    @apply border-sky-200 bg-sky-50 text-sky-700;
+  }
+  .badge-info {
+    @apply border-slate-200 bg-slate-100 text-slate-600;
+  }
+
+  /* Small status pills (channel state, trust state, link operstate). */
+  .pill {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10.5px] font-semibold;
+  }
+  .pill-trusted {
+    @apply bg-emerald-100 text-emerald-800;
+  }
+  .pill-warn {
+    @apply bg-amber-100 text-amber-800;
+  }
+  .pill-muted {
+    @apply bg-slate-100 text-slate-600;
+  }
+  .pill-down {
+    @apply bg-rose-100 text-rose-800;
+  }
+  /* Rule on/off — lowercase text is read verbatim by the e2e suite. */
+  .state.pill-on {
+    @apply bg-emerald-50 text-emerald-700;
+  }
+  .state.pill-off {
+    @apply bg-slate-100 text-slate-500;
+  }
+
+  /* ===== rows (live feed + alert list) ==================================== */
+
+  .feed-row {
+    @apply flex items-center gap-3 border-b border-slate-100 px-3 py-2.5 hover:bg-slate-50;
+  }
+  .feed-row:last-of-type {
+    border-bottom: none;
+  }
+  .feed-row-type {
+    @apply hidden w-28 shrink-0 truncate text-[11px] text-slate-500 sm:block;
+  }
+  .feed-row-summary {
+    @apply min-w-0 flex-1 truncate text-[12.5px] text-slate-900;
+  }
+  .feed-row a {
+    @apply flex min-w-0 flex-1 items-center gap-3;
+  }
+  .feed-row-time {
+    @apply hidden shrink-0 text-[11px] text-slate-400 sm:block;
+  }
+
+  /* The left rule is the severity read across feeds, lists and the detail page. */
+  [data-severity="critical"] {
+    border-left: 3px solid var(--color-sev-critical);
+  }
+  [data-severity="high"] {
+    border-left: 3px solid var(--color-sev-high);
+  }
+  [data-severity="medium"] {
+    border-left: 3px solid var(--color-sev-medium);
+  }
+  [data-severity="low"] {
+    border-left: 3px solid var(--color-sev-low);
+  }
+  [data-severity="info"] {
+    border-left: 3px solid var(--color-sev-info);
+  }
+
+  /* ===== buttons =========================================================== */
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold transition-colors;
+    outline-offset: 2px;
+  }
+  .btn:focus-visible {
+    outline: 2px solid var(--color-accent-blue);
+  }
+  .btn-primary {
+    @apply border-blue-600 bg-blue-600 text-white hover:bg-blue-700;
+  }
+  .btn-ghost {
+    @apply border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50;
+  }
+  .btn-danger {
+    @apply border-rose-200 bg-white text-rose-700 hover:bg-rose-50;
+  }
+  .btn-sm {
+    @apply px-2 py-1 text-[11.5px];
+  }
+
+  /* ===== forms ============================================================= */
+
+  .field {
+    @apply block text-[12.5px] font-medium text-slate-700;
+  }
+  .field-hint {
+    @apply mt-1 block text-[11px] font-normal text-slate-500;
+  }
+  .input {
+    @apply mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[12.5px] font-normal text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25;
+  }
+  .check {
+    @apply size-4 shrink-0 accent-blue-600;
+  }
+  .mono {
+    @apply font-mono text-[11.5px];
+  }
+
+  /* ===== notices =========================================================== */
+
+  .notice {
+    @apply flex items-start gap-2 rounded-lg border px-3 py-2 text-[12.5px];
+  }
+  .notice .icon {
+    @apply mt-0.5 size-3.5 shrink-0;
+  }
+  .notice-ok {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-800;
+  }
+  .notice-error {
+    @apply border-rose-200 bg-rose-50 text-rose-700;
+  }
+
+  /* ===== empty states ====================================================== */
+
+  .empty-state {
+    @apply flex flex-col items-center gap-2 px-4 py-8 text-center text-[12.5px] text-slate-500;
+  }
+  .empty-icon {
+    @apply flex size-9 items-center justify-center rounded-full bg-slate-100 text-slate-400;
+  }
+  .empty-icon .icon {
+    font-size: 16px;
+  }
+
+  /* ===== tables ============================================================ */
+
+  .table {
+    @apply w-full border-collapse text-[12.5px];
+  }
+  .table thead th {
+    @apply border-b border-slate-200 px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-[0.07em] text-slate-500;
+  }
+  .table tbody td {
+    @apply border-b border-slate-100 px-3 py-2.5 align-top;
+  }
+  .table tbody tr:hover {
+    @apply bg-slate-50/70;
+  }
+  .table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .evidence {
+    @apply divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white text-[12.5px] shadow-xs;
+  }
+  .evidence > div {
+    @apply flex gap-3 px-3 py-2;
+  }
+  .evidence dt {
+    @apply w-44 shrink-0 pt-0.5 text-slate-500;
+  }
+  .evidence dd {
+    @apply min-w-0 flex-1 break-words text-slate-900;
+  }
+
+  /* ===== links ============================================================= */
+
+  .link {
+    @apply font-semibold text-blue-600 hover:underline;
+  }
+  .back-link {
+    @apply inline-flex items-center gap-1 text-[12.5px] font-medium text-slate-500 hover:text-slate-900;
+  }
+  /* A chevron reads as "forward"; the back affordance flips it. */
+  .back-link .icon {
+    transform: rotate(180deg);
+  }
+}
+
+/* The `hidden` attribute must always win: components like .badge set an author-level
+   display, and a plain display:none from the UA sheet loses to it — leaving "hidden"
+   elements visible. Alpine's `:hidden` binding adds/removes this same attribute, so
+   both the no-JS fallback and the bound state stay correct. */
+@layer base {
+  [hidden] {
+    display: none !important;
+  }
+}

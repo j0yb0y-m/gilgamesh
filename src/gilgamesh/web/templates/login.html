@@ -2,39 +2,42 @@
 
 {% block title %}Sign in — Gilgamesh{% endblock %}
 
+{% import "_icons.html" as icons %}
+
 {% block content %}
 <section id="login" class="mx-auto max-w-sm">
-  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Sign in</h1>
+  <div class="mb-5 flex flex-col items-center gap-2 pt-4 text-center">
+    <span class="brand-mark size-10 text-lg">{{ icons.icon("shield") }}</span>
+    <h1 class="page-title">Sign in</h1>
+  </div>
 
-  <form method="post" action="/login" class="grid gap-4">
-    <label class="text-sm">
-      Username
-      <input
-        id="username"
-        name="username"
-        type="text"
-        autocomplete="username"
-        required
-        class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
-      />
-    </label>
+  <form method="post" action="/login" class="card">
+    <div class="card-body grid gap-4">
+      <div>
+        <label class="field" for="username">Username</label>
+        <input
+          id="username"
+          name="username"
+          type="text"
+          autocomplete="username"
+          required
+          class="input"
+        />
+      </div>
 
-    <label class="text-sm">
-      Password
-      <input
-        id="password"
-        name="password"
-        type="password"
-        autocomplete="current-password"
-        required
-        class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
-      />
-    </label>
+      <div>
+        <label class="field" for="password">Password</label>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+          class="input"
+        />
+      </div>
 
-    <div>
-      <button type="submit" class="rounded bg-slate-900 px-3 py-1 text-sm text-white">
-        Sign in
-      </button>
+      <button type="submit" class="btn btn-primary">{{ icons.icon("lock") }}Sign in</button>
     </div>
   </form>
 </section>
