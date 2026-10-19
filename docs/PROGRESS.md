@@ -846,7 +846,9 @@ console: 0 errors, 0 warnings across the whole tour (no CSP violations)
   because `src_ip` is None — two distinct rogue servers inside a cooldown aggregate
   into one incident.
 - `docs/PLAN.md`'s tech-stack table still lists `limits` and `itsdangerous`, which the
-  runtime does not use.
+  runtime does not use. **(Resolved 2026-10-19:** both rows removed — neither is in
+  `uv.lock` — and the leftover `deploy/logrotate/` removed with a regression test,
+  mirroring the tmpfiles one.**)**
 - UNVERIFIED items remain in `docs/research/09-open-questions.md` (Discord rate-limit
   numbers, Suricata severity direction) and hardware-only items in `docs/BLOCKERS.md`.
 

@@ -88,6 +88,15 @@ def test_no_tmpfiles_fragment_is_shipped() -> None:
     assert not (DEPLOY / "tmpfiles.d").exists()
 
 
+def test_no_logrotate_fragment_is_shipped() -> None:
+    """All three services log to the journal, and journald's own caps bound it.
+
+    An earlier deploy/logrotate/gilgamesh fragment had nothing left to rotate once the
+    design moved every log stream to journald — dead configuration, removed.
+    """
+    assert not (DEPLOY / "logrotate").exists()
+
+
 # --- the units ----------------------------------------------------------------
 
 

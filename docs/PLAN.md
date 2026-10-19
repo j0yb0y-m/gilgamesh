@@ -95,8 +95,6 @@ Full detail and citations: `docs/research/02-detection-catalogue.md`, consolidat
 | Templates | Jinja2 | 3.1.6 | BSD-3-Clause | https://github.com/pallets/jinja |
 | Capture/parse | Scapy | 2.8.0 | GPL-2.0-only | https://github.com/secdev/scapy |
 | Hashing | argon2-cffi | 25.1.0 | MIT | https://github.com/hynek/argon2-cffi |
-| Sessions | itsdangerous | current | BSD-3-Clause | https://github.com/pallets/itsdangerous |
-| Rate limit | limits | 5.8.0 | MIT | https://github.com/alisaifee/limits |
 | HTTP client | httpx | current | BSD-3-Clause | https://github.com/encode/httpx |
 | Email | aiosmtplib | current | MIT | https://github.com/cole/aiosmtplib |
 | DB | SQLite (stdlib `sqlite3`) | OS | Public domain | https://sqlite.org/copyright.html |
