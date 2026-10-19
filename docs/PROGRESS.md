@@ -4,7 +4,7 @@
 acceptance command actually ran and passed; paste the command + key output lines here.
 **Target:** Raspberry Pi 4 (4 GB), Raspberry Pi OS Lite 64-bit (Debian 13 trixie, Py 3.13).
 **Dev machine:** x86_64 Fedora 44 (Py 3.14.8). Project pinned to **Python 3.13**.
-**Last updated:** 2026-10-19 (UI design system — see "Phase 8 — UI design system")
+**Last updated:** 2026-10-19 (Phase 9 — user documentation, logo, repo hygiene)
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
@@ -964,6 +964,88 @@ inline icon in "Manage the allowlist" are both visible in the captures — the r
 fixes working in a real browser.
 
 ---
+
+## Phase 9 — User documentation, logo, repo hygiene (2026-10-19) — branch `feature/ui-design-system`
+
+The repo's existing docs were written by the build loop *for* the build loop
+(evidence-first, terse). This phase rewrote the **user-facing** layer for a
+non-technical audience and left all engineering records untouched.
+
+### What shipped
+
+- **`README.md`** — rewritten as a landing page: plain-language pitch
+  (detect-and-alert only), the six attack families with one-line meanings, two
+  embedded screenshots, the guides table, honest limits pointer, developer
+  commands, uninstall pointer, licence + artwork note.
+- **`docs/INSTALL.md`** (new) — step-by-step from an empty SD card: Raspberry Pi
+  Imager settings, SSH, one-time `git` + `uv` install (uses the official
+  `astral.sh/uv` installer for root — the installer itself still contains no
+  `curl`, per `test_installer_obeys_the_projects_hard_rules`), clone (private-repo
+  note), `sudo ./install.sh` and what it creates, **two placement paths** (Mode A
+  single-interface capture vs Mode B inline bridge with the NetworkManager
+  `nmcli` recipe from `docs/research/01`), optional Suricata 8.0.7 from
+  **trixie-backports** (per `docs/research/03`: 7.0.x is EOL upstream), the
+  setup-token wizard, and an honest troubleshooting table. Uninstalling kept in
+  sync with `install.sh`'s artifacts (exact unit names, `/etc/gilgamesh`,
+  `/var/lib/gilgamesh`, sysusers fragment).
+- **`docs/USAGE.md`** (new) — first-evening checklist, page-by-page tour
+  (dashboard/pause-buffer, alerts + detail, devices, rules with the full 12-rule
+  table from `rules.py`, allowlist, alerts out incl. quiet hours + masked
+  secrets, health, settings), an alert-severity response table, a worked
+  `gateway_mac_changed` example quoting the real `known_mac`/`claimed_mac`
+  evidence fields, noise-calibration advice, and the deliberate blind spots
+  (TLS content, DoH/DoT, LAN↔LAN not crossing the bridge, IPv6 deferred).
+- **Logo** — new emblem (shield + eye; "Gilgamesh, he who saw everything"),
+  drawn as SVG in the app's own palette (`#0f172a` slate, `#2563eb` accent):
+  `static/favicon.svg` replaced in place (the `?v=` stamp and tests need no
+  change), plus `docs/images/gilgamesh-mark.svg`, `gilgamesh-mark.png` (512),
+  and `gilgamesh-logo.png` (wordmark lockup, browser-rendered at exact size —
+  wordmark as SVG `<text>` with a font stack in `gilgamesh-logo.svg`).
+- **Screenshots** — 14 numbered captures from a real Chrome session against a
+  real server + sensor (seeded with synthetic Scapy PCAPs, no attack tools),
+  committed under `docs/images/screenshots/` (~1.3 MB total): setup wizard,
+  sign-in, empty dashboard, rules, dashboard live, paused buffer, alerts, alert
+  detail, devices, notifications, health, settings, allowlist, mobile 390px.
+- **Repo hygiene** — `deploy/logrotate/` removed (dead config since the journald
+  caps) with a regression test mirroring the tmpfiles one; the unused
+  `limits`/`itsdangerous` rows dropped from `docs/PLAN.md`; GitHub description + topics set with `gh`
+  (nids, intrusion-detection, network-security, raspberry-pi, suricata, scapy,
+  fastapi, home-network).
+
+### Notes made during the writing
+
+- The usage guide documents the UI as it is: the `false-positive` route exists
+  (`POST /alerts/{id}/false-positive`) but is **not surfaced in any template** in
+  v1, so the guide points noise-suppression at the allowlist instead. A
+  "react to an alert as false positive" button remains a genuine UX gap for a
+  later milestone.
+- The demo walk used a scratch generator (`/tmp/opencode/demo/make-demos.py`):
+  scan (21 ports uncompleted), 200-SYN flood, DNS forged reply after a real
+  query, and six new devices (two deliberately randomised MACs). Counts match
+  the plan's thresholds, so all four detector families read well in shots.
+
+### Evidence — the gate, run on the final tree
+
+```text
+$ uv sync --frozen            → Checked 46 packages in 0.64ms
+$ uv run ruff check .         → All checks passed!
+$ uv run ruff format --check . → 78 files already formatted
+$ uv run pyright              → 0 errors, 0 warnings, 0 informations
+$ uv run pytest -q            → exit 0 (full dot progress, no failures)
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome → exit 0 (13 passed by counter)
+```
+
+### Evidence — the screenshots session (Playwright MCP, real server)
+
+Server: `GILGAMESH_DATA_DIR=/tmp/opencode/demo/data`, `127.0.0.1:8461`, real
+Chrome via the MCP browser at 1280×800 (one pass at 390×844). The wizard, all
+eight pages, alert detail, paused-buffer round-trip (pause → replay guest.pcap
+→ `+2 while paused` → resume), and one live allowlist add were all driven
+through the real UI. App pages produced no console errors or warnings.
+
+```text
+console (app on :8461): Total messages: 0 (Errors: 0, Warnings: 0)
+```
 
 ## Notes
 

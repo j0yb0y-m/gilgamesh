@@ -89,3 +89,9 @@ accepts URL-encoded form bodies only, so the combined work stays cleanly GPL-2.0
 
 - Exact licence file for `email-validator` (declared CC0-1.0 on PyPI; confirm at add time).
 - Wheels for every dependency on aarch64 — audited in `03-tooling-and-versions.md` §3; re-verify per add.
+
+## F. Project artwork
+
+| Asset | Author | Licence | Note |
+|---|---|---|---|
+| Logo (`docs/images/gilgamesh-mark.svg`, `gilgamesh-logo.png`, `static/favicon.svg`) | original work drawn for this project | GPL-2.0-or-later (same as the project) | hand-authored SVG; the wordmark PNG was rendered from the same geometry. Lucide (`_icons.html`) was already recorded above for the UI icons; the emblem itself is original, not an icon reuse. |
