@@ -107,7 +107,6 @@ tar -C "$SRC_DIR" \
 	--exclude=./.superpowers \
 	--exclude=./.ruff_cache \
 	--exclude=./.pytest_cache \
-	--exclude=./docs/audit-screenshots \
 	--exclude='__pycache__' \
 	--exclude='*.pyc' \
 	-cf - . | tar -C "$PREFIX" -xf -

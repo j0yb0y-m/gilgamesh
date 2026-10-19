@@ -705,7 +705,7 @@ $ uv run pytest tests/e2e -m e2e --browser-channel chrome → 9 passed in 6.56s
 
 An independent audit of the generated codebase ("is it real, and does it work?"), not a
 feature milestone. Every finding below was reproduced before it was fixed, and each fix
-carries a regression test. The uncommitted screenshots are in `docs/audit-screenshots/`.
+carries a regression test.
 
 ### What was actually wrong (reproduced, then fixed)
 
@@ -765,19 +765,18 @@ stored low event from inventory: New device 00:11:22:33:44:12 seen on the networ
 
 ### Frontend pass (Playwright MCP, real server, real browser)
 
-Walked every page, took the screenshots committed in `docs/audit-screenshots/`
-(`01-setup-wizard` … `13-login`), and exercised the interactive parts against the running
-instance:
+Walked every page with a real browser against the running instance and exercised the
+interactive parts:
 
 - htmx rule toggle: clicked "Disable" on *IP/MAC conflict* — the URL stayed `/rules`, the
-  control flipped to *Enable · off*, and the swapped control still responded (`08`).
+  control flipped to *Enable · off*, and the swapped control still responded.
 - Alpine live feed: pressed **Pause live feed** (state → *Paused*, button → *Resume live
   feed*), replayed another new device while paused (counter → *+1 while paused*), then
-  resumed and watched it flush into the feed (`06`).
+  resumed and watched it flush into the feed.
 - Console: **0 errors, 0 warnings** across the whole tour — no CSP violations from the
   inline-free markup (`style-src 'self'` would catch a stray `x-show`).
 - A Discord webhook was saved and the page then showed *configured* with the field masked
-  (*"•••• saved — leave blank to keep"*) — secrets are never echoed back (`09`).
+  (*"•••• saved — leave blank to keep"*) — secrets are never echoed back.
 
 ### Documentation corrected in this pass
 

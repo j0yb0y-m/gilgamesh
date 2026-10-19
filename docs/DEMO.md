@@ -73,9 +73,3 @@ lab victim and show the `arp_spoof` alert (severity `high`) arrive with its evid
 * **Testable without the hardware** — `uv run pytest` (unit) and
   `uv run pytest tests/e2e -m e2e --browser-channel chrome` (real browser against the real
   server) both run on a laptop.
-
-## Screenshots
-
-`docs/audit-screenshots/` holds the UI captures taken from a running instance (dashboard
-with the live feed, rules, alerts, alert detail, settings, notifications, health, and the
-first-run wizard) — useful as slides if the live demo is not possible.
