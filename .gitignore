@@ -32,4 +32,8 @@ node_modules/
 
 # --- agent working scratch (never committed) ---
 .superpowers/
+# Playwright MCP writes snapshots and console logs here when a browser session is used
+# for the front-end audit; they are evidence, not source (screenshots are copied into
+# docs/audit-screenshots/ deliberately).
+.playwright-mcp/
 

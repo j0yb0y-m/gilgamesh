@@ -125,10 +125,10 @@ gilgamesh/
 ├── AGENTS.md  PROMPT.md
 ├── deploy/
 │   ├── systemd/              # gilgamesh-sensor.service, gilgamesh-web.service, gilgamesh-rules-update.{service,timer}
-│   ├── sysusers.d/           # service accounts
-│   ├── tmpfiles.d/           # /run/gilgamesh socket/state dir
-│   ├── logrotate/            # log rotation (SD wear)
-│   └── suricata/             # generated overrides + disable.conf/enable.conf templates
+│   ├── sysusers.d/           # service accounts (web, sensor + the group they share)
+│   ├── journald/             # log caps (SD wear); the journal is the log file
+│   ├── gilgamesh.env.example # every deployment setting, documented
+│   └── suricata/             # 10-gilgamesh.conf drop-in (AF_PACKET capture of all traffic + EVE output)
 ├── src/gilgamesh/
 │   ├── __init__.py
 │   ├── config.py             # settings + DB-as-source-of-truth config rendering (atomic file writes)
@@ -279,7 +279,9 @@ All values validated with bounded types before storage; rendered into engine con
 | SQLite / OS / systemd | ≤ 400 MiB | low | bounded |
 | **Total target** | **≤ ~2.0 GiB of 4 GB** | headroom for bursts | bounded by retention |
 
-Mitigations: WAL, `noatime`, `tmpfs` for transient files, journald caps, logrotate, bounded batch pruning. The sensor gets `OOMScoreAdjust` protection over the web tier.
+Mitigations: WAL, `noatime`, `tmpfs` for transient files, journald caps (`deploy/journald/10-gilgamesh.conf`), bounded batch pruning. The sensor gets `OOMScoreAdjust` protection over the web tier.
+(Log rotation as a *separate* mechanism was dropped: all three services log to the journal, which
+journald's own caps already bound — a logrotate file would have had nothing to rotate.)
 
 ---
 
@@ -305,6 +307,12 @@ Mitigations: WAL, `noatime`, `tmpfs` for transient files, journald caps, logrota
 | **M14** | **Hardening + deploy:** install.sh, systemd units, capabilities, vendored assets + VENDOR.md, README, DEMO.md | `install.sh`, `deploy/**`, `static/js/vendor/**`, `static/css/app.css`, `README.md`, `docs/DEMO.md`, `tests/test_deploy_artifacts.py` | all | `uv run pytest tests/test_deploy_artifacts.py -q` → units parse (`systemd-analyze verify` on Linux if available, else file assertions); assets present with recorded sha256 |
 
 **Critical path for the deadline:** M1 → M2 → M3..M7 → M8 → M9 → M10 → M12 → M13 → M14. M11 may follow M13 if time is short.
+
+> **Historical note (2026-10-18):** two M1/M9 placeholders did not survive the audit and are
+> gone from the tree: `sensors/fake.py` (nothing imported it once the pipeline was exercised
+> with real packets) and the `disable.conf`/`enable.conf` writer (it clobbered files
+> `suricata-update` owns; per-signature control is deferred to the D-017 design in
+> `docs/DECISIONS.md`). Both are recorded in `docs/PROGRESS.md` → *Phase 6 — Audit*.
 
 ---
 

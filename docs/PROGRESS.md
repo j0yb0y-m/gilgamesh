@@ -4,7 +4,7 @@
 acceptance command actually ran and passed; paste the command + key output lines here.
 **Target:** Raspberry Pi 4 (4 GB), Raspberry Pi OS Lite 64-bit (Debian 13 trixie, Py 3.13).
 **Dev machine:** x86_64 Fedora 44 (Py 3.14.8). Project pinned to **Python 3.13**.
-**Last updated:** 2026-10-14
+**Last updated:** 2026-10-18 (audit pass — see "Phase 6 — Audit")
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
@@ -611,7 +611,10 @@ returns the cursor. Rules survive a restart because the database is the source o
 - Created `rules_update.py` for update flow.
 - Added deploy artifacts: systemd units (web/sensor/rules-update + timer), sysusers.d, tmpfiles.d, logrotate, suricata drop-in.
 - Added install.sh (placeholder), README/DEMO stubs, and `tests/test_deploy_artifacts.py`.
-- Updated deps: httpx to runtime, removed httpx2; `uv lock` updated.
+- Updated deps: httpx moved to runtime (the notifiers post with it). `httpx2` is **kept**
+  as a dev dependency: Starlette 1.8's `TestClient` prefers it and warns — an error under
+  `filterwarnings`, see the M1 correction above. The duplicate `httpx` specifier that this
+  edit left behind in `pyproject.toml` was removed during the 2026-10-18 audit.
 - All tests pass: 311 passed; ruff/pyright clean.
 
 ```text
@@ -692,9 +695,100 @@ $ uv run pytest tests/e2e -m e2e --browser-channel chrome → 9 passed in 6.56s
 ```
 
 
-## Phase 5 — Finish- [x] `README.md`, `docs/DEMO.md`
+## Phase 5 — Finish
+
+- [x] `README.md`, `docs/DEMO.md`
 - [x] Clean-room check: `uv sync --frozen` + `uv run pytest` + `uv run ruff check` green
 - [x] Final report
+
+## Phase 6 — Audit (2026-10-18)
+
+An independent audit of the generated codebase ("is it real, and does it work?"), not a
+feature milestone. Every finding below was reproduced before it was fixed, and each fix
+carries a regression test. The uncommitted screenshots are in `docs/audit-screenshots/`.
+
+### What was actually wrong (reproduced, then fixed)
+
+| # | Finding | Evidence it was real | Fix |
+|---|---------|----------------------|-----|
+| 1 | `sensors/fake.py` shipped a detector that emitted invented events; nothing imported it after the fake seeding was removed | `grep -rn FakeDetector src tests` → only its own file | file deleted (`git rm`); the production pipeline tests already build real packets |
+| 2 | Static assets were sent with **no `Cache-Control`**: a browser may keep executing the `app.js` it downloaded before an upgrade | the MCP browser served a stale `app.js` and the console filled with `Alpine Expression Error: Undefined variable: liveFeed`; a fresh context (e2e) was fine | `/static/*` now answers `Cache-Control: no-cache` (Starlette's ETag makes it a 304), and every asset URL carries a content stamp `?v=` (`web/deps.py: asset_version`) |
+| 3 | `systemctl stop gilgamesh-web` never completed while a dashboard was open — Uvicorn waits for in-flight request tasks *before* the lifespan shutdown, and an SSE stream never finishes | two web processes were still alive 12 s after SIGTERM and had to be SIGKILLed; the log showed no shutdown line | `timeout_graceful_shutdown=5` in `web/server.py`, with the uvicorn ordering written down; the cancelled stream drops its subscription in the generator's `finally` |
+| 4 | Three templates rendered as raw HTML (sign-in, first-run setup, allowlist) and controls on alerts/rules/notifications were unstyled | screenshot of `/setup` vs `/settings`; `grep -c 'class="' login.html` → 0 | all four files restyled with the app's vocabulary, `app.css` rebuilt, regression test scans every template for a control without a class |
+
+### Evidence — the gate, run on the final tree
+
+```text
+$ uv sync --frozen                     → Checked 46 packages in 1ms
+$ uv run ruff check .                  → All checks passed!
+$ uv run ruff format --check .         → 77 files already formatted
+$ uv run pyright                       → 0 errors, 0 warnings, 0 informations
+$ uv run pytest                        → 380 passed, 13 deselected in 17.65s
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome
+.............                                                       [100%]
+13 passed
+```
+
+New test files added by the audit: `test_gate.py`, `test_delivery.py`,
+`test_runner_wiring.py`, `test_rules_update.py`, `test_suricata_ingest.py`,
+`test_deploy_artifacts.py`, `test_rules_ui.py`; the e2e file grew to 13 flows (htmx toggle
+without a reload, Alpine pause/resume with buffering, no CSP violations, and the server
+exiting promptly on SIGTERM with a dashboard open).
+
+### Evidence — the detectors, end to end, without the Pi (C10)
+
+A capture is built with Scapy and replayed through the real sensor into a real database;
+the alerts below are the real output of the real detectors.
+
+```text
+$ GILGAMESH_DATA_DIR=/tmp/opencode/gg-demo GILGAMESH_PCAP=/tmp/opencode/gg-demo/demo-capture.pcap \
+  GILGAMESH_GATEWAY_IP=192.168.1.1 uv run gilgamesh-sensor
+sensor started: replay capture from pcap file /tmp/opencode/gg-demo/demo-capture.pcap
+stored high event from dns: response without matching query for mybank.example (id 1) from 9.9.9.9
+stored medium event from scan_flood: 192.168.1.66 probed 21 ports on 192.168.1.20 without completing a handshake
+stored high event from scan_flood: 101 SYNs from 192.168.1.30 to 192.168.1.20 within 1s
+replay finished: 191 packets processed
+```
+
+The ARP and DHCP detectors stayed silent on purpose: both hold a five-minute warm-up
+(`arp.py`, `dhcp.py`), which a replay finishes long before. That is the documented
+anti-false-positive design, not a broken detector — the unit tests cover them with an
+explicit clock. It is listed in `docs/BLOCKERS.md` as a Pi-only item to observe.
+
+Two guest devices were then replayed after setting *New device → Learning period* to `0`
+**in the Rules page**, which proves the UI → sensor parameter path with no code change:
+
+```text
+stored low event from inventory: New device 00:11:22:33:44:11 seen on the network
+stored low event from inventory: New device 00:11:22:33:44:12 seen on the network
+```
+
+### Frontend pass (Playwright MCP, real server, real browser)
+
+Walked every page, took the screenshots committed in `docs/audit-screenshots/`
+(`01-setup-wizard` … `13-login`), and exercised the interactive parts against the running
+instance:
+
+- htmx rule toggle: clicked "Disable" on *IP/MAC conflict* — the URL stayed `/rules`, the
+  control flipped to *Enable · off*, and the swapped control still responded (`08`).
+- Alpine live feed: pressed **Pause live feed** (state → *Paused*, button → *Resume live
+  feed*), replayed another new device while paused (counter → *+1 while paused*), then
+  resumed and watched it flush into the feed (`06`).
+- Console: **0 errors, 0 warnings** across the whole tour — no CSP violations from the
+  inline-free markup (`style-src 'self'` would catch a stray `x-show`).
+- A Discord webhook was saved and the page then showed *configured* with the field masked
+  (*"•••• saved — leave blank to keep"*) — secrets are never echoed back (`09`).
+
+### Documentation corrected in this pass
+
+- `README.md`: real *Install (Raspberry Pi)*, *Development*, and *Uninstalling* sections —
+  `install.sh` printed "Uninstall see the README" against a README that had no such section.
+- `docs/DEMO.md`: rewritten from a 5-line stub into two runnable demos (laptop replay, Pi
+  live) plus the safety rule that attack traffic belongs to an isolated lab.
+- `docs/PLAN.md`: layout now matches the repository (`journald/` + `gilgamesh.env.example`
+  instead of the dropped `tmpfiles.d/` and `logrotate/`); the resource-budget line explains
+  why logrotate was dropped.
+- `docs/BLOCKERS.md`: the four things this audit cannot verify without the target hardware.
 
 ---
 

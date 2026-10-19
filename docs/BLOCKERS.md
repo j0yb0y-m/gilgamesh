@@ -3,7 +3,18 @@
 **Rule:** after 3 failed attempts at the same step, write it here and ask the user.
 Also list anything that needs the real Pi, a real network, or a user decision.
 
-**Last updated:** 2026-10-14 (Phase 0 → Phase 2)
+**Last updated:** 2026-10-18 (audit pass; the deployment artifacts were rewritten)
+
+---
+
+## Found by the 2026-10-18 audit — needs the Pi to confirm
+
+| # | Item | Why it cannot be checked here |
+|---|------|-------------------------------|
+| C1 | `install.sh` end to end on a fresh Pi (users, venv build, unit enable, journald caps) | it installs a service; the dev machine is not the target |
+| C2 | `systemd-sysusers` `u!` (fully locked account) needs systemd ≥ 257 | trixie ships 257, but confirm on the installed image |
+| C3 | The systemd hardening set (`ProtectSystem=strict`, `StateDirectoryMode`, capabilities) actually permitting the sensor to capture | requires CAP_NET_RAW on the target's kernel/AppArmor profile |
+| C4 | `GILGAMESH_INTERFACE=br0` naming a bridge that exists *before* first start | the install script warns and tells the owner what to run |
 
 ---
 
