@@ -1,10 +1,44 @@
 [Unit]
 Description=Update Gilgamesh/Suricata rules and reload
+Documentation=file:/opt/gilgamesh/README.md
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=gilgamesh-sensor
-Group=gilgamesh-sensor
+User=gilgamesh
+Group=gilgamesh
 WorkingDirectory=/opt/gilgamesh
 EnvironmentFile=/etc/gilgamesh/gilgamesh.env
-ExecStart=/usr/local/bin/uv run --no-sync gilgamesh-rules-update
+ExecStart=/opt/gilgamesh/.venv/bin/gilgamesh-rules-update
+
+# Three directories are written: the shared database directory (the success stamp read
+# by the Health page), Suricata's rule output directory, and suricata-update's cache.
+# The "-" prefix keeps the unit startable when a directory does not exist on this
+# deployment (systemd.exec(5): paths prefixed with "-" are ignored when missing).
+ReadWritePaths=/var/lib/gilgamesh -/var/lib/suricata -/var/cache/suricata
+UMask=0007
+
+# --- hardening (each directive verified in systemd.exec(5), systemd 257) ---
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Downloads rules over the network and talks to Suricata's command socket.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

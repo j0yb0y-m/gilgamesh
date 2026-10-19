@@ -1,5 +1,6 @@
 [Unit]
 Description=Gilgamesh packet-capture sensor
+Documentation=file:/opt/gilgamesh/README.md
 After=network-online.target
 Wants=network-online.target
 
@@ -7,23 +8,28 @@ Wants=network-online.target
 Type=simple
 User=gilgamesh-sensor
 Group=gilgamesh-sensor
+# Group membership is how the sensor writes into the web user's state directory.
 SupplementaryGroups=gilgamesh
 WorkingDirectory=/opt/gilgamesh
 EnvironmentFile=/etc/gilgamesh/gilgamesh.env
-ExecStart=/usr/local/bin/uv run --no-sync gilgamesh-sensor
+ExecStart=/opt/gilgamesh/.venv/bin/gilgamesh-sensor
 Restart=on-failure
 RestartSec=5s
-StateDirectory=gilgamesh-sensor
-LogsDirectory=gilgamesh-sensor
-RuntimeDirectory=gilgamesh-sensor
 
-# capabilities: raw capture, no root
+# The sensor owns no directory of its own: it writes events and devices into the shared
+# database at /var/lib/gilgamesh (created by install.sh, and by the web unit's
+# StateDirectory=). ProtectSystem=strict makes everything else read-only, so this path
+# must exist before the unit starts.
+ReadWritePaths=/var/lib/gilgamesh
+UMask=0007
+
+# --- capture capabilities: raw sockets, no root ---
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 NoNewPrivileges=yes
 
+# --- hardening (each directive verified in systemd.exec(5), systemd 257) ---
 ProtectSystem=strict
-ReadWritePaths=/run/gilgamesh
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
@@ -37,6 +43,7 @@ RestrictSUIDSGID=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
+# AF_PACKET is the capture socket itself.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_PACKET
 
 [Install]

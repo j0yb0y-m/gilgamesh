@@ -1,6 +1,7 @@
 [Unit]
 Description=Gilgamesh web UI and API
-After=network-online.target gilgamesh-sensor.service
+Documentation=file:/opt/gilgamesh/README.md
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -8,32 +9,46 @@ Type=simple
 User=gilgamesh
 Group=gilgamesh
 WorkingDirectory=/opt/gilgamesh
+# Created by install.sh from deploy/gilgamesh.env.example. Missing = the unit refuses to
+# start rather than silently running with the wrong data directory.
 EnvironmentFile=/etc/gilgamesh/gilgamesh.env
-ExecStart=/usr/local/bin/uv run --no-sync gilgamesh-web
+# The venv entry point, not `uv run`: the service must not depend on a tool being on
+# PATH, and starting must never attempt to resolve or download packages on a box with
+# no internet.
+ExecStart=/opt/gilgamesh/.venv/bin/gilgamesh-web
 Restart=on-failure
 RestartSec=5s
-StateDirectory=gilgamesh
-LogsDirectory=gilgamesh
-CacheDirectory=gilgamesh
-# NB: no RuntimeDirectory= here. The shared /run/gilgamesh hand-off socket dir is
-# created by tmpfiles.d (see §1.3), so it is not tied to this unit's lifetime.
 
-# --- hardening (all directives below verified in systemd.exec(5), v257) ---
+# /var/lib/gilgamesh holds the database: the admin password hash, the notifier secrets
+# (webhook URLs, bot token, SMTP password) and every recorded event. 0770 plus this UMask
+# keeps it out of the reach of every other account on the box — SQLite creates the -wal
+# and -shm files alongside it with the same umask.
+StateDirectory=gilgamesh
+StateDirectoryMode=0770
+UMask=0007
+
+# --- hardening (each directive verified in systemd.exec(5), systemd 257) ---
+# StateDirectory= is excluded from ProtectSystem=strict, so the database stays writable
+# while the rest of the filesystem does not.
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
-ReadWritePaths=/var/lib/gilgamesh /var/log/gilgamesh /run/gilgamesh
+ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictNamespaces=yes
-RestrictRealtime=yes
 LockPersonality=yes
+RestrictRealtime=yes
 RestrictSUIDSGID=yes
 MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target
