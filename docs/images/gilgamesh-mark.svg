@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Gilgamesh emblem">
+  <rect width="128" height="128" rx="26" fill="#0f172a"/>
+  <path d="M64 24 L96 36 V64 C96 84 82.4 97.6 64 104 C45.6 97.6 32 84 32 64 V36 Z"
+        fill="none" stroke="#e2e8f0" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M38 64 C 48 50.4 80 50.4 90 64 C 80 77.6 48 77.6 38 64 Z"
+        fill="none" stroke="#e2e8f0" stroke-width="6" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="12" fill="#2563eb"/>
+  <circle cx="64" cy="64" r="5" fill="#0f172a"/>
+</svg>

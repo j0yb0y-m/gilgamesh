@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 170" role="img" aria-label="Gilgamesh — Home-network intrusion detection">
+  <!-- Wordmark: the text is a font stack so any platform can render it; the
+       rendered reference (gilgamesh-logo.png) was produced from this geometry. -->
+  <rect x="20" y="21" width="128" height="128" rx="26" fill="#0f172a"/>
+  <path d="M84 45 L116 57 V85 C116 105 102.4 118.6 84 125 C65.6 118.6 52 105 52 85 V57 Z"
+        fill="none" stroke="#e2e8f0" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M58 85 C 68 71.4 100 71.4 110 85 C 100 98.6 68 98.6 58 85 Z"
+        fill="none" stroke="#e2e8f0" stroke-width="6" stroke-linejoin="round"/>
+  <circle cx="84" cy="85" r="12" fill="#2563eb"/>
+  <circle cx="84" cy="85" r="5" fill="#0f172a"/>
+  <text x="176" y="92" font-family="Noto Sans, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="64" font-weight="800" letter-spacing="-1.8" fill="#0f172a">Gilgamesh</text>
+  <text x="176" y="126" font-family="Noto Sans, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="22" font-weight="500" letter-spacing="0.4" fill="#64748b">Home-network intrusion detection</text>
+</svg>
