@@ -11,6 +11,7 @@ stop detection, and a secret must never appear in a log, an exception, or a mess
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, time
 from pathlib import Path
@@ -28,7 +29,11 @@ from gilgamesh.notifiers.base import (
 )
 from gilgamesh.notifiers.discord import DiscordChannel, build_discord_request
 from gilgamesh.notifiers.email import EmailChannel, build_email_message
-from gilgamesh.notifiers.telegram import TelegramChannel, build_telegram_request
+from gilgamesh.notifiers.telegram import (
+    TelegramChannel,
+    build_telegram_request,
+    http_transport,
+)
 
 SECRET = "https://discord.com/api/webhooks/123/tok-SUPERSECRET"
 BOT_TOKEN = "123456:ABC-DEF-supersecret"
@@ -117,6 +122,131 @@ def test_telegram_url_encodes_the_token() -> None:
     request = build_telegram_request("bad/token", "1", make_event())
 
     assert str(request.url) == "https://api.telegram.org/botbad%2Ftoken/sendMessage"
+
+
+# --- the real HTTP transport (Telegram response-body semantics) ----------------
+
+
+class _StubTelegramResponse:
+    """A minimal ``httpx.Response`` lookalike driven by a canned body.
+
+    ``json()`` raises exactly like httpx when the body is not JSON, which models an
+    intermediary (proxy, captive portal) answering 200 with its own page.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        body: object,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._body = body
+        self.headers = headers or {}
+
+    @property
+    def is_success(self) -> bool:
+        return 200 <= self.status_code < 300
+
+    def json(self) -> object:
+        if isinstance(self._body, str):
+            raise json.JSONDecodeError("not JSON", self._body, 0)
+        return self._body
+
+
+def _stub_httpx(monkeypatch: pytest.MonkeyPatch, response: _StubTelegramResponse) -> None:
+    """Point ``httpx.AsyncClient`` at one canned response; no network in tests."""
+    import httpx
+
+    class _StubAsyncClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        async def __aenter__(self) -> _StubAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def post(self, url: object, **kwargs: object) -> _StubTelegramResponse:
+            self.last = (url, kwargs.get("json"))
+            return response
+
+    monkeypatch.setattr(httpx, "AsyncClient", _StubAsyncClient)
+
+
+async def test_telegram_200_with_ok_false_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Bot API reports its own errors as HTTP 200 with ``ok: false`` in the body."""
+    _stub_httpx(
+        monkeypatch,
+        _StubTelegramResponse(
+            200,
+            {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"},
+        ),
+    )
+
+    result = await http_transport(build_telegram_request(BOT_TOKEN, "12", make_event()))
+
+    assert result.ok is False
+    assert "chat not found" in (result.error or "")
+    assert result.status_code == 200
+
+
+async def test_telegram_200_with_ok_true_is_a_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_httpx(monkeypatch, _StubTelegramResponse(200, {"ok": True, "result": {"message_id": 7}}))
+
+    result = await http_transport(build_telegram_request(BOT_TOKEN, "12", make_event()))
+
+    assert result.ok is True
+    assert result.status_code == 200
+
+
+async def test_telegram_200_with_an_unreadable_body_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 200 whose body no Telegram client can parse is not a delivered alert."""
+    _stub_httpx(monkeypatch, _StubTelegramResponse(200, "<html>not ours</html>"))
+
+    result = await http_transport(build_telegram_request(BOT_TOKEN, "12", make_event()))
+
+    assert result.ok is False
+    assert result.status_code == 200
+
+
+def test_telegram_retry_after_prefers_the_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flood-control seconds arrive as ``parameters.retry_after`` (ResponseParameters)."""
+    _stub_httpx(
+        monkeypatch,
+        _StubTelegramResponse(
+            429,
+            {"ok": False, "parameters": {"retry_after": 7}},
+            headers={"retry-after": "3"},
+        ),
+    )
+
+    result = asyncio.run(http_transport(build_telegram_request(BOT_TOKEN, "12", make_event())))
+
+    assert result.retry_after == 7.0
+
+
+def test_telegram_retry_after_falls_back_to_the_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_httpx(
+        monkeypatch,
+        _StubTelegramResponse(429, None, headers={"retry-after": "3"}),
+    )
+
+    result = asyncio.run(http_transport(build_telegram_request(BOT_TOKEN, "12", make_event())))
+
+    assert result.retry_after == 3.0
+    assert result.ok is False
 
 
 def test_email_message_has_subject_and_body() -> None:

@@ -20,6 +20,7 @@ redirect the request somewhere else.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
 
 from gilgamesh.models import Event
@@ -31,6 +32,9 @@ from gilgamesh.notifiers.base import (
     NotificationChannel,
     format_event_message,
 )
+
+if TYPE_CHECKING:
+    import httpx
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 DEFAULT_TIMEOUT_SECONDS = 10.0
@@ -61,23 +65,54 @@ async def http_transport(request: HttpRequest) -> DeliveryResult:
     except httpx.HTTPError as exc:
         return DeliveryResult(ok=False, error=str(exc))
 
-    if response.is_success:
+    body = _response_body(response)
+    if response.is_success and body is not None and body.get("ok") is True:
         return DeliveryResult(ok=True, status_code=response.status_code)
 
-    # Telegram reports its own errors as HTTP 200 with "ok": false in the body, and
-    # uses 429 for flood control, so both must be treated as failures.
+    # Every failure shape, treated the same way: a non-2xx status, Telegram's own
+    # documented error (HTTP 200 with "ok": false in the body — the body's Boolean
+    # "ok" field is the verdict, so the status code alone can lie), or a body no
+    # Telegram server could have written (an intermediary answered instead).
+    description = body.get("description") if body is not None else None
+    if isinstance(description, str) and description:
+        error = description
+    elif body is None and response.is_success:
+        error = f"telegram returned {response.status_code} without a JSON body"
+    else:
+        error = f"telegram returned {response.status_code}"
     return DeliveryResult(
         ok=False,
         status_code=response.status_code,
-        error=f"telegram returned {response.status_code}",
-        retry_after=_retry_after(response),
+        error=error,
+        retry_after=_retry_after(response, body),
     )
 
 
-def _retry_after(response: object) -> float | None:
-    """Read ``retry_after`` from a Telegram flood-control response."""
-    headers = getattr(response, "headers", {})
-    raw = headers.get("retry-after")
+def _response_body(response: httpx.Response) -> dict[str, object] | None:
+    """Read the response body as a JSON object, tolerating anything else."""
+    try:
+        body: object = response.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    return cast("dict[str, object]", body)
+
+
+def _retry_after(response: httpx.Response, body: dict[str, object] | None) -> float | None:
+    """Seconds to wait: body ``parameters.retry_after`` first, then the header.
+
+    The Bot API documents ``retry_after`` inside the optional ``ResponseParameters``
+    object of a flood-control error; some intermediaries only bother with the header.
+    """
+    parameters = body.get("parameters") if body is not None else None
+    if isinstance(parameters, dict):
+        fields = cast("dict[str, object]", parameters)
+        specified = fields.get("retry_after")
+        if isinstance(specified, (int, float)):
+            return max(0.0, float(specified))
+
+    raw = response.headers.get("retry-after")
     if raw is None:
         return None
     try:
