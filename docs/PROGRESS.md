@@ -4,7 +4,7 @@
 acceptance command actually ran and passed; paste the command + key output lines here.
 **Target:** Raspberry Pi 4 (4 GB), Raspberry Pi OS Lite 64-bit (Debian 13 trixie, Py 3.13).
 **Dev machine:** x86_64 Fedora 44 (Py 3.14.8). Project pinned to **Python 3.13**.
-**Last updated:** 2026-10-19 (audit pass 2 — see "Phase 7 — Audit pass 2")
+**Last updated:** 2026-10-19 (UI design system — see "Phase 8 — UI design system")
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done · `[!]` blocked/needs decision
 
@@ -849,6 +849,117 @@ console: 0 errors, 0 warnings across the whole tour (no CSP violations)
   runtime does not use.
 - UNVERIFIED items remain in `docs/research/09-open-questions.md` (Discord rate-limit
   numbers, Suricata severity direction) and hardware-only items in `docs/BLOCKERS.md`.
+
+---
+
+## Phase 8 — UI design system (2026-10-19) — branch `feature/ui-design-system`
+
+Every page rebuilt on one design vocabulary ("Instrument — light": severity colour
+language, blue `#2563eb` accent, icon nav with active pill, tiles/cards with
+header+footer, consistent `.btn`/`.input`/`.field`/`.badge`/`.pill`). Mock approved in a
+visual-companion session before implementation; TDD: contract tests written first.
+
+### New pieces
+
+- `src/gilgamesh/web/templates/_icons.html` — vendored **Lucide** icons (v1.59.0) as two
+  Jinja macros: `icon(name)` → anchor-less inline `<svg><use href="#icon-…">`, and
+  `sprite()` → hidden `<symbol>` map rendered once in `base.html`. Licences recorded in
+  `docs/research/12-licenses.md` **before** use (Lucide ISC + Feather-derived subset MIT,
+  with the primary-source URL and the release-archive SHA-256).
+- `static/css/input.css` — the design system source: `@theme` tokens and the
+  `@layer components` vocabulary (`.site-header`, `. nav-link`, `.card*`, `.tile*`,
+  `.badge-{info|low|medium|high|critical}`, `.pill-*`, `.feed-row*` with left severity
+  rules, `.btn*`, `.input`, `.field`, `.notice`, `.empty-state`, …). `static/css/app.css`
+  is the committed build output — never hand-edited.
+- `tests/test_design_system.py` — 27 tests guarding the system: licence recorded before
+  use, `aria-current="page"` + landmark nav per page, severity badges per level, the
+  built CSS contains the required selectors, every rendered icon reference resolves to a
+  defined symbol, and no template ships an inline `style=` (CSP).
+
+### Selector contract kept
+
+All browser-facing selectors/texts preserved (verified by 27 design tests + the same e2e
+suite as before): `article.rule` + `data-rule-id`, `span.state` lowercase on/off and the
+htmx swap contract (`hx-post`, `hx-target="this"`, `hx-swap="outerHTML"`), `#live-feed`,
+`#feed-toggle`, `#feed-state`, `x-data="liveFeed"`, `x-text="buttonLabel"`, `@click="toggle"`,
+`role="alert"` only in `base.html`, unique `aria-current="page"`, button names
+"Sign out"/"Sign in"/"Create account"/"Pause live feed"/"Resume live feed", heading
+"Recent activity", `data-event-id`/`data-severity` on rows, `get_by_label` on every form
+control. `static/js/app.js` `buildItem()` now emits the same row markup the template
+renders server-side, and drops the server's empty-state row when the first live event
+lands.
+
+### Bugs the gates caught during the build
+
+- A preview notification card split the Save button out of its own `<form>` (orphan
+  fields on submit); the same pattern in the allowlist form — both kept single-form.
+- e2e caught `CPU`/`Memory`/`Disk` demoted from headings to styled spans on the health
+  page (`get_by_role("heading")` broke) — restored as `<h2 class="tile-label">`.
+- Real-browser walkthrough (Chrome, 1280px) measured the header nav clipping "Settings":
+  nav `scrollWidth` 739 vs `clientWidth` 705 — fixed by tightening `.nav-link` padding
+  (px-2.5→2, gap-1.5→1), not by renaming anything. Also fixed: `.icon` was
+  `display:block`, which stacked icons above the text in headings/links; CPU load floats
+  now print as `1.60, 1.10, 1.12`.
+
+### Evidence — the gate, run on the final tree
+
+```text
+$ /tmp/opencode/tailwind/tailwindcss-linux-x64 -i static/css/input.css -o static/css/app.css
+Done in 104ms   (binary SHA-256 verified: ./tailwindcss-linux-x64: OK)
+$ uv run ruff check .            → All checks passed!
+$ uv run ruff format --check .   → 78 files already formatted
+$ uv run pyright                 → 0 errors, 0 warnings, 0 informations
+$ uv run pytest                  → 412 passed, 13 deselected in 20.88s
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome
+13 passed in 18.34s
+```
+
+### Evidence — the frontend, walked with a real browser
+
+Same real-server setup as audit pass 2 (temp `GILGAMESH_DATA_DIR`, real Chrome), seeded
+with synthetic demo events/devices, then every page screenshotted (`.playwright-mcp/01…22`):
+setup wizard → sign in → dashboard (tiles, Live chip, severity badges + left rules in the
+feed) → alerts + filter → alert detail (Facts grid + evidence table) → devices (trust /
+rename / randomised pill) → rules → allowlist (entry + remove) → alerts out (masked
+secret placeholder) → health (rounded load, interface pills) → settings → mobile 390px
+(icon-only nav, two-column tiles).
+
+```text
+full-page screenshots: .playwright-mcp/01-setup.png … 22-dashboard-mobile.png
+```
+
+### Review round (reviewer subagent over the full diff)
+
+Must-fix: none; contract verified independently (rebuilt app.css byte-identical with the
+CLI, hx swap attrs intact, unique `aria-current`, CSRF hidden inputs on every POST form,
+no inline `style`/`x-show`). Applied from the findings: `aria-label` on every nav link so
+the phone breakpoint's icon-only nav keeps accessible names (the old CSS comment claimed
+otherwise — wrong), a static `hidden` on `#feed-buffered` plus an
+`@layer base [hidden] { display: none !important; }` guard (an author-level `display` on
+`.badge` beats the UA rule), back-link chevron flipped 180°, dead `.feed-list` class
+dropped, a de-indent in `app.js` fixed. Verified in-browser: mobile nav names
+`['Dashboard','Alerts',…]`; no-JS first paint leaves `#feed-buffered` invisible.
+Not taken (recorded, no action): severity-fallback symmetry (server side is enum-typed),
+hardcoded "ET Open" chip, footer buffer-count constant, pause→play icon flip
+(needs `paused` plumbed into the Alpine component).
+
+### Second browser round — Playwright MCP (real interactive session, 2026-10-19)
+
+Drove the same walkthrough server with the Playwright **MCP** browser for the
+interaction-level proof, not just rendering: sign-in → all 8 pages → alert detail →
+**Pause live feed** (button flipped to "Resume live feed", `#feed-state` chip to
+"Paused", screenshot taken) → back to **Pause live feed** → htmx rule toggle clicked
+through the swapped fragment in both directions (state on→off→on, URL stayed `/rules`)
+→ console audit for the whole session:
+
+```text
+browser_console_messages(level=warning, all=true) → Total messages: 0 (Errors: 0, Warnings: 0)
+```
+
+Screenshots: `.playwright-mcp/mcp-01-dashboard.png … mcp-12-health-mobile.png`
+(includes 390px mobile dashboard + health). The 180°-rotated back link chevron and the
+inline icon in "Manage the allowlist" are both visible in the captures — the review
+fixes working in a real browser.
 
 ---
 

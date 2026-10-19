@@ -62,6 +62,17 @@ accepts URL-encoded form bodies only, so the combined work stays cleanly GPL-2.0
 | htmx | 2.0.11 (pinned, D-009) | 0BSD | https://github.com/bigskysoftware/htmx | yes |
 | Alpine.js | 3.17.4 (CSP build) | MIT | https://github.com/alpinejs/alpine | yes |
 | Tailwind CSS (standalone CLI; built CSS committed) | 4.3.3 | MIT | https://github.com/tailwindlabs/tailwindcss | yes |
+| Lucide icons (inline SVG subset, static markup) | 1.59.0 `V` (2026-10-19) | ISC | https://github.com/lucide-icons/lucide | yes |
+| Lucide icons — Feather-derived subset | 1.59.0 `V` (2026-10-19) | MIT | https://github.com/lucide-icons/lucide (upstream icons © 2013–present Cole Bemis, Feather) | yes |
+
+> Lucide's `LICENSE` (fetched 2026-10-19) is ISC, but a named subset of icons is derivative of
+> the Feather project and is MIT (© Cole Bemis). Both rows are recorded here because icons we
+> inline (search, log-out, chevron-*, check, x, trash-*, alert-triangle, …) fall in the
+> Feather-derived list. Both licences are permissive; GPL-2.0-or-later is compatible with
+> either. Icons are taken from the official tag `1.59.0` (release zip
+> `lucide-icons-1.59.0.zip`, digests published on the release) and committed as static inline
+> SVG in `src/gilgamesh/web/templates/_icons.html` — no runtime dependency, no CDN (C5).
+
 
 ## D. Explicitly excluded (C1)
 
