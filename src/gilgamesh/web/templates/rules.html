@@ -4,19 +4,27 @@
 
 {% block content %}
 <section id="rules">
-  <h2>Detection rules</h2>
-  <p>
+  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Detection rules</h1>
+
+  <p class="mb-4 text-sm text-slate-600">
     These are the checks Gilgamesh runs. You can switch any of them off or adjust its
     thresholds. Suppressing something here only affects that rule — alerts about the
     same device from other rules still appear.
   </p>
 
-  {% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+  {% if notice %}
+    <p role="status" class="mb-4 rounded border border-emerald-300 bg-emerald-50 p-2 text-emerald-800">
+      {{ notice }}
+    </p>
+  {% endif %}
 
   {% for item in rules %}
-    <article class="rule" data-rule-id="{{ item.definition.id }}">
-      <h3>{{ item.definition.name }}</h3>
-      <p>{{ item.definition.description }}</p>
+    <article
+      class="rule mb-4 rounded border border-slate-200 p-4"
+      data-rule-id="{{ item.definition.id }}"
+    >
+      <h2 class="text-lg font-semibold text-slate-900">{{ item.definition.name }}</h2>
+      <p class="mb-3 text-sm text-slate-600">{{ item.definition.description }}</p>
 
       {% include "_rule_toggle.html" %}
 
@@ -85,6 +93,8 @@
     </article>
   {% endfor %}
 
-  <p><a href="/suppressions">Manage the allowlist</a></p>
+  <p class="mt-6 text-sm">
+    <a class="underline" href="/suppressions">Manage the allowlist</a>
+  </p>
 </section>
 {% endblock %}
