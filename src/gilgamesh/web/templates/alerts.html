@@ -7,7 +7,7 @@
   <h1 class="mb-4 text-2xl font-semibold text-slate-900">Alerts</h1>
 
   <form method="get" action="/alerts" class="mb-4 flex flex-wrap gap-2 text-sm">
-    <select name="severity" aria-label="Severity">
+    <select name="severity" aria-label="Severity" class="rounded border border-slate-300 px-2 py-1">
       <option value="">Any severity</option>
       {% for choice in severities %}
         <option value="{{ choice }}" {% if severity == choice %}selected{% endif %}>
@@ -16,7 +16,7 @@
       {% endfor %}
     </select>
 
-    <select name="event_type" aria-label="Type">
+    <select name="event_type" aria-label="Type" class="rounded border border-slate-300 px-2 py-1">
       <option value="">Any type</option>
       {% for choice in event_types %}
         <option value="{{ choice }}" {% if event_type == choice %}selected{% endif %}>
@@ -31,8 +31,9 @@
       value="{{ search }}"
       placeholder="Search summaries"
       aria-label="Search"
+      class="rounded border border-slate-300 px-2 py-1"
     />
-    <button type="submit">Filter</button>
+    <button type="submit" class="rounded bg-slate-900 px-3 py-1 text-sm text-white">Filter</button>
   </form>
 
   {% if events %}

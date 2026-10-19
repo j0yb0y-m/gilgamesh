@@ -15,8 +15,15 @@ Run the file whole::
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
+from conftest import RunningServer
 from playwright.sync_api import Page, expect
+
+from gilgamesh.db import Database
+from gilgamesh.models import Event, EventType, Severity
 
 pytestmark = pytest.mark.e2e
 
@@ -38,11 +45,12 @@ def sign_in(page: Page, app_url: str) -> None:
 
 
 def test_first_run_wizard_creates_the_admin_and_lands_on_dashboard(
-    page: Page, app_url: str
+    page: Page, app_url: str, setup_token: str
 ) -> None:
     page.goto(f"{app_url}/")
     expect(page).to_have_url(f"{app_url}/setup")
 
+    page.get_by_label("Setup token").fill(setup_token)
     page.get_by_label("Administrator username").fill(USERNAME)
     page.get_by_label("Password", exact=True).fill(PASSWORD)
     page.get_by_role("button", name="Create account").click()
@@ -74,20 +82,58 @@ def test_signing_out_and_back_in(page: Page, app_url: str) -> None:
 # --- dashboard ----------------------------------------------------------------
 
 
-def test_dashboard_shows_health_tiles_and_the_seeded_event(page: Page, app_url: str) -> None:
+def test_dashboard_shows_health_tiles_and_the_empty_feed(page: Page, app_url: str) -> None:
     sign_in(page, app_url)
 
     expect(page.locator("#tiles")).to_contain_text("Alerts today")
-    # The walking-skeleton detector seeds one event at start-up, so the feed is
-    # never empty on a fresh box. (Create_app seeds it; if this regresses, the
-    # dashboard would silently show nothing.)
-    expect(page.locator("#live-feed li.event").first).to_be_visible()
+    # Nothing has been detected yet on this fresh box, and the app must say so
+    # rather than invent an event: an empty feed is the honest state.
+    expect(page.locator("#live-feed")).to_contain_text("Nothing recorded yet")
+
+
+def test_a_detected_event_reaches_the_live_feed_over_sse(
+    page: Page, app_url: str, server_log: Path
+) -> None:
+    """The whole live path: sensor-style DB write → delivery loop → SSE → DOM.
+
+    The sensor is a separate process writing to SQLite; this writes the same way (the
+    project's own ``Database``/``Event`` on the shared data directory) and waits for
+    the browser to receive it without a reload. If delivery or the client script
+    regresses, this is the test that says so.
+    """
+    sign_in(page, app_url)
+    page.goto(f"{app_url}/")
+
+    database = Database(server_log.parent / "gilgamesh.db")
+    try:
+        database.insert_event(
+            Event(
+                type=EventType.ARP_SPOOF,
+                severity=Severity.HIGH,
+                detector="arp",
+                summary="e2e: gateway MAC changed",
+                src_mac="aa:bb:cc:dd:ee:ff",
+                src_ip="10.0.0.66",
+            )
+        )
+    finally:
+        database.close()
+
+    newest = page.locator("#live-feed li.event").first
+    expect(newest).to_contain_text("e2e: gateway MAC changed")
+    expect(newest).to_have_attribute("data-severity", "high")
 
 
 # --- rules --------------------------------------------------------------------
 
 
-def test_ruling_a_rule_on_and_off(page: Page, app_url: str) -> None:
+def test_ruling_a_rule_on_and_off_without_a_page_reload(page: Page, app_url: str) -> None:
+    """The toggle is an htmx post: the control is swapped, the page is not.
+
+    This is the browser half of ``test_rules_ui.py``'s fragment contract — it fails if
+    htmx is missing, misconfigured (CSP, wrong swap target), or if the swapped control
+    stops working.
+    """
     sign_in(page, app_url)
     page.goto(f"{app_url}/rules")
 
@@ -98,9 +144,65 @@ def test_ruling_a_rule_on_and_off(page: Page, app_url: str) -> None:
 
     first_rule.locator("form[action='/rules/toggle'] button").click()
 
-    expect(page.get_by_role("status")).to_be_visible()
-    state_after = page.locator(f"article.rule[data-rule-id='{rule_id}'] span.state")
-    expect(state_after).to_have_text("off" if state_before == "on" else "on")
+    state = page.locator(f"article.rule[data-rule-id='{rule_id}'] span.state")
+    expect(state).to_have_text("off" if state_before == "on" else "on")
+    expect(page).to_have_url(f"{app_url}/rules")  # no navigation happened
+
+    # The swapped-in control must still be live, not dead markup.
+    page.locator(
+        f"article.rule[data-rule-id='{rule_id}'] form[action='/rules/toggle'] button"
+    ).click()
+    expect(state).to_have_text(state_before)
+
+
+def test_the_live_feed_can_be_paused_and_resumed(page: Page, app_url: str) -> None:
+    """Alpine's CSP build must initialise under the real Content-Security-Policy.
+
+    If Alpine fails to load (or a component expression is illegal in the CSP build) the
+    server-rendered labels never change, so this test fails loudly instead of the button
+    quietly doing nothing.
+    """
+    sign_in(page, app_url)
+    page.goto(f"{app_url}/")
+
+    state = page.locator("#feed-state")
+    toggle = page.locator("#feed-toggle")
+    expect(state).to_have_text("Live")
+
+    toggle.click()
+
+    expect(state).to_have_text("Paused")
+    expect(toggle).to_contain_text("Resume live feed")
+
+    toggle.click()
+
+    expect(state).to_have_text("Live")
+    expect(toggle).to_contain_text("Pause live feed")
+
+
+def test_the_browser_reports_no_script_errors_or_csp_violations(page: Page, app_url: str) -> None:
+    """The strict CSP is only useful if the vendored scripts actually work under it."""
+    violations: list[str] = []
+    page.on(
+        "console",
+        lambda message: (
+            violations.append(message.text)
+            if "Content Security Policy" in message.text or "Refused to" in message.text
+            else None
+        ),
+    )
+    page.on("pageerror", lambda error: violations.append(f"uncaught: {error}"))
+
+    sign_in(page, app_url)
+    page.goto(f"{app_url}/")
+    page.locator("#feed-toggle").click()  # exercise Alpine
+    page.goto(f"{app_url}/rules")
+    page.locator("article.rule").first.locator(
+        "form[action='/rules/toggle'] button"
+    ).click()  # htmx
+    page.wait_for_timeout(500)
+
+    assert violations == []
 
 
 # --- notifications ------------------------------------------------------------
@@ -161,3 +263,30 @@ def test_health_page_renders_the_report_and_rule_controls(page: Page, app_url: s
     for section in ("CPU", "Memory", "Disk", "Interfaces", "Detection rules"):
         expect(page.get_by_role("heading", name=section)).to_be_visible()
     expect(page.get_by_role("button", name="Update rules now")).to_be_enabled()
+
+
+# --- shutdown (must stay last: it stops the server the other tests share) ------
+
+
+def test_the_server_stops_promptly_with_a_dashboard_open(
+    page: Page, app_url: str, server: RunningServer
+) -> None:
+    """SIGTERM is not allowed to be swallowed by an open server-sent-event stream.
+
+    Uvicorn waits for in-flight request tasks *before* running the application's lifespan
+    shutdown, and an SSE stream is a request that never completes on its own — so without
+    the bound configured in ``gilgamesh.web.server`` this process would still be alive
+    minutes later, and systemd would eventually SIGKILL it. The regression showed up
+    exactly here: a real browser holding /events/stream open.
+    """
+    sign_in(page, app_url)
+    page.goto(f"{app_url}/")
+    expect(page.locator("#feed-state")).to_have_text("Live")
+    page.wait_for_timeout(1000)  # let the EventSource establish itself
+
+    server.process.terminate()
+    try:
+        server.process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        server.process.kill()
+        pytest.fail("gilgamesh-web did not exit within 15s of SIGTERM while a dashboard was open")

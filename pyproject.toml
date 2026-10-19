@@ -23,7 +23,6 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
-    "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "pydantic-settings>=2.15.0",
     "scapy>=2.8.0",
@@ -43,6 +42,9 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    # Starlette 1.8's TestClient prefers httpx2 and warns (as an error, see
+    # filterwarnings) when only httpx is installed. httpx itself is a *runtime*
+    # dependency — the notifiers post with it — so both packages are required.
     "httpx2>=2.13.1",
     "playwright>=1.64.0",
     "pyright>=1.1.414",

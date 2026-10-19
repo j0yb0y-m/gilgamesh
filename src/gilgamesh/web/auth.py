@@ -13,9 +13,9 @@
 * **CSRF** uses the synchronizer-token pattern: a per-session token is rendered into the
   page and checked on every unsafe method. A valid session cookie alone is not enough to
   change anything, which is the actual threat.
-* **Lockout** is tracked per account and separately per client address, so one attacker
-  cannot lock a household out of its own box, and one shared NAT address cannot be used to
-  grind a single account forever.
+* **Lockout** is enforced on the client address (falling back to the account name only
+  for callers that have no address), so one attacker cannot lock a household out of its
+  own box just by guessing the owner's password a few times.
 
 The password policy accepts either a long passphrase (≥ 20 characters, which is what
 people can actually remember) or a shorter one (≥ 12) that mixes at least three character
@@ -47,9 +47,24 @@ class Clock(Protocol):
 #: Pi has 4 GB shared with Suricata and the web app.
 DEFAULT_PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=4)
 
+#: A pre-computed hash verified when no real one exists (unknown user) or the account is
+#: locked. Verifying against a constant costs exactly one hash check, so an unknown
+#: account is indistinguishable from a wrong password by timing — hashing a fresh dummy
+#: each time (the previous behaviour) made the unknown case *twice* as slow instead.
+_DUMMY_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4$6sTFYL1yyCBOKzjw3s/yEw"
+    "$66YeeX7N0ry5U9Pqlnn67ms5DmyRf+rxETDYan7H6FI"
+)
+
 MIN_PASSWORD_LENGTH = 12
 PASSPHRASE_LENGTH = 20
 MIN_CHARACTER_CLASSES = 3
+
+#: ``app_settings`` key holding the first-run setup token. The name is a settings key,
+#: not a credential; the token itself is random per install.
+SETUP_TOKEN_KEY = "setup_token"  # noqa: S105
+#: The longest accepted account name. The login form and the users table are text.
+USERNAME_MAX_LENGTH = 64
 
 DEFAULT_IDLE_TIMEOUT = timedelta(hours=1)
 DEFAULT_ABSOLUTE_TIMEOUT = timedelta(hours=12)
@@ -221,40 +236,102 @@ class AuthService:
         """Whether the install still has no administrator account."""
         return self._db.count_users() == 0
 
+    def ensure_setup_token(self) -> str | None:
+        """The first-run setup token, generated on first use.
+
+        The wizard is reachable by anyone who can open the port before the owner has
+        claimed the box, which on a home LAN is exactly the *wrong* someone. The token
+        closes that window: it is printed to the journal by the web process at start-up
+        and must be typed into the wizard, so possession of the console — not merely
+        network adjacency — is what claims the install. Returns ``None`` once an
+        administrator exists.
+        """
+        if not self.needs_setup():
+            return None
+        existing = self._db.get_setting(SETUP_TOKEN_KEY)
+        if existing:
+            return existing
+        token = secrets.token_urlsafe(16)
+        self._db.set_setting(SETUP_TOKEN_KEY, token)
+        return token
+
+    def verify_setup_token(self, supplied: str | None) -> bool:
+        """Constant-time check of a submitted setup token."""
+        expected = self._db.get_setting(SETUP_TOKEN_KEY)
+        if expected is None or not supplied:
+            return False
+        return secrets.compare_digest(expected, supplied)
+
+    def clear_setup_token(self) -> None:
+        """Forget the setup token once the administrator has been created."""
+        self._db.execute("DELETE FROM app_settings WHERE key = ?", (SETUP_TOKEN_KEY,))
+
     def create_user(self, username: str, password: str) -> User:
-        """Create an account, rejecting duplicates."""
-        if self._db.get_user(username) is not None:
-            msg = f"user {username!r} already exists"
+        """Create the administrator account, rejecting duplicates and bad names."""
+        name = username.strip()
+        if not 1 <= len(name) <= USERNAME_MAX_LENGTH or not name.isprintable():
+            msg = f"username must be 1-{USERNAME_MAX_LENGTH} printable characters"
+            raise ValueError(msg)
+        # The product has exactly one account (v1). Enforcing it here rather than only
+        # in the wizard's "does anyone exist" check keeps a racing second POST from
+        # creating a second administrator behind the owner's back.
+        if self._db.count_users() > 0:
+            msg = "an administrator account already exists"
+            raise ValueError(msg)
+        if self._db.get_user(name) is not None:
+            msg = f"user {name!r} already exists"
             raise ValueError(msg)
         password_hash = hash_password(password, self._hasher)
-        user_id = self._db.create_user(username, password_hash, self._now())
-        return User(id=user_id, username=username)
+        user_id = self._db.create_user(name, password_hash, self._now())
+        return User(id=user_id, username=name)
 
     def login(self, username: str, password: str, client: str | None = None) -> Session | None:
-        """Authenticate and start a session, or return ``None`` on failure."""
+        """Authenticate and start a session, or return ``None`` on failure.
+
+        Lockout is enforced on the client address when one is known — the property that
+        matters on a home LAN, where a misbehaving guest must not be able to lock the
+        owner out of their own box — and on the account only for callers that have no
+        address (a local check).
+        """
         account_key = f"user:{username}"
         client_key = f"client:{client}" if client else None
-        for key in (account_key, client_key):
-            if key and self.lockout.is_locked(key):
-                return None
+        lock_key = client_key or account_key
+        if self._is_locked(lock_key):
+            # Burn the same hash time as a real check before answering, so an attacker
+            # cannot tell a locked account from a wrong password by stopwatch.
+            verify_password(_DUMMY_HASH, password, self._hasher)
+            return None
 
         record = self._db.get_user(username)
         if record is None:
-            # Hash anyway so a missing account and a wrong password take similar time.
-            verify_password(self._hasher.hash("not-a-real-password"), password, self._hasher)
-            self._fail(account_key, client_key)
+            # Same single hash check as the wrong-password path: similar time, and no
+            # second 64 MiB Argon2 pass per guess.
+            verify_password(_DUMMY_HASH, password, self._hasher)
+            self._fail(lock_key)
             return None
 
         user_id, stored_hash = record
         if not verify_password(stored_hash, password, self._hasher):
-            self._fail(account_key, client_key)
+            self._fail(lock_key)
             return None
 
         self.lockout.record_success(account_key)
         if client_key:
             self.lockout.record_success(client_key)
-        self._db.record_login_attempt(account_key, self._now(), True)
+        self._db.record_login_attempt(lock_key, self._now(), True)
         return self.start_session(User(id=user_id, username=username))
+
+    def _is_locked(self, lock_key: str) -> bool:
+        """Whether ``lock_key`` is throttled, in memory or on disk.
+
+        The in-memory counters die with the process, so without the persisted attempts a
+        ``systemctl restart`` (which any local fault can trigger) would hand an attacker
+        a full set of fresh guesses. Both are consulted; either one can lock.
+        """
+        if self.lockout.is_locked(lock_key):
+            return True
+        since = self._now() - self.lockout.window
+        return self._db.failed_attempts_since(lock_key, since) >= self.lockout.max_attempts
 
     def start_session(self, user: User) -> Session:
         """Create a session with a fresh CSRF token."""
@@ -342,12 +419,11 @@ class AuthService:
             return False
         return secrets.compare_digest(session.csrf_token, supplied)
 
-    def _fail(self, account_key: str, client_key: str | None) -> None:
+    def _fail(self, lock_key: str) -> None:
         now = self._now()
-        self.lockout.record_failure(account_key, now)
-        self._db.record_login_attempt(account_key, now, False)
-        if client_key:
-            self.lockout.record_failure(client_key, now)
+        self.lockout.record_failure(lock_key, now)
+        # Record under the same key the lockout uses, so the persisted count can back it.
+        self._db.record_login_attempt(lock_key, now, False)
 
     def _now(self) -> float:
         clock = self._clock

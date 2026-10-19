@@ -26,7 +26,14 @@ async def rules_page(
 async def rules_toggle(
     request: Request, session: Annotated[Session, Depends(require_session)]
 ) -> Response:
-    """Enable or disable one rule."""
+    """Enable or disable one rule.
+
+    Two clients, one write. A browser with htmx posts here and gets back just the
+    control it clicked (``_rule_toggle.html``), which htmx swaps in place; a browser
+    without JavaScript posts the same form and gets the whole page back with a notice.
+    The rule is saved before either response is chosen, so both clients see the same
+    state.
+    """
     service: RuleConfigService = request.app.state.rules
     form = await read_form(request)
     rule_id = form.get("rule_id", "")
@@ -34,7 +41,13 @@ async def rules_toggle(
     try:
         service.set_enabled(rule_id, enabled)
     except RuleParamError as exc:
+        if _is_htmx(request):
+            # htmx does not swap error responses, so the control keeps showing the state
+            # that is actually stored; nothing is silently misreported.
+            return HTMLResponse(f"Not saved: {exc}", status_code=422)
         return _rules_page(request, session, notice=f"Not saved: {exc}")
+    if _is_htmx(request):
+        return _rule_toggle_fragment(request, session, rule_id)
     state = "enabled" if enabled else "disabled"
     return _rules_page(request, session, notice=f"{rule_id} {state}.")
 
@@ -101,6 +114,27 @@ async def suppressions_delete(
     except (RuleParamError, ValueError) as exc:
         return _suppressions_page(request, session, error=f"Not removed: {exc}")
     return _suppressions_page(request, session, notice="Allowlist entry removed.")
+
+
+def _is_htmx(request: Request) -> bool:
+    """Whether the request came from htmx (it sets this header on every request)."""
+    return request.headers.get("HX-Request", "").lower() == "true"
+
+
+def _rule_item(request: Request, rule_id: str) -> dict[str, object]:
+    """The context one rule control needs, in the shape ``rules.html`` renders."""
+    service: RuleConfigService = request.app.state.rules
+    definition = service.catalogue.require(rule_id)
+    return {"definition": definition, "setting": service.settings()[definition.id]}
+
+
+def _rule_toggle_fragment(request: Request, session: Session, rule_id: str) -> Response:
+    """Render just one rule's toggle, for an htmx swap."""
+    return templates.TemplateResponse(
+        request=request,
+        name="_rule_toggle.html",
+        context={"session": session, "item": _rule_item(request, rule_id)},
+    )
 
 
 def _rules_page(request: Request, session: Session, notice: str = "") -> Response:

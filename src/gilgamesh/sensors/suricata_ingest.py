@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,10 @@ from gilgamesh.models import Event, EventType, Severity
 from gilgamesh.pipeline import Pipeline, PipelineDecision
 
 logger = logging.getLogger(__name__)
+
+#: How long the tailer waits before retrying an exhausted read. Half a second keeps
+#: alert latency low without spinning a core on the Pi.
+FOLLOW_POLL_SECONDS = 0.5
 
 
 class StopSignal(Protocol):
@@ -149,14 +154,39 @@ class EveIngestor:
 
         ``stop`` is any object with an ``is_set()`` method; passing ``None`` follows
         forever. Intended to be called with ``threading.Event`` from the sensor service.
+
+        At end-of-file the loop *sleeps* and retries, and re-opens the file when its
+        inode changes — Suricata rotates ``eve.json`` by renaming, and a tailer that
+        spins on an exhausted read burns the CPU the copy has to spare.
+
+        A missing file is waited for rather than treated as an error: at boot the sensor
+        normally starts before Suricata has created its log, and giving up there would
+        silently disable Suricata ingestion until the next restart.
         """
         buffer = ""
-        with _open_following(path) as handle:
+        handle = None
+        inode = -1
+        try:
             while True:
                 if stop is not None and stop.is_set():
                     return
+                if handle is None:
+                    try:
+                        handle, inode = _open_following(path)
+                    except OSError:
+                        time.sleep(FOLLOW_POLL_SECONDS)
+                        continue
                 chunk = handle.read()
                 if not chunk:
+                    time.sleep(FOLLOW_POLL_SECONDS)
+                    try:
+                        current = path.stat()
+                    except OSError:
+                        continue
+                    if current.st_ino != inode:
+                        handle.close()
+                        handle, inode = _open_following(path)
+                        buffer = ""
                     continue
                 buffer += chunk
                 *lines, buffer = buffer.split("\n")
@@ -164,6 +194,9 @@ class EveIngestor:
                     event = self.parse_line(line)
                     if event is not None:
                         yield event
+        finally:
+            if handle is not None:
+                handle.close()
 
     def _submit(self, event: Event) -> bool:
         if self._pipeline.submit(event).decision is not PipelineDecision.STORE:
@@ -189,7 +222,6 @@ def parse_eve_line(line: str, severity_map: Mapping[int, Severity] | None = None
     except json.JSONDecodeError:
         logger.warning("skipping malformed EVE record: %s", stripped[:120])
         return None
-    parsed = json.loads(stripped)
     if not isinstance(parsed, dict):
         return None
     record = cast("dict[str, object]", parsed)
@@ -301,13 +333,14 @@ def suricatasc_reload_command(unix_socket: Path | None = None) -> list[str]:
     return command
 
 
-def _open_following(path: Path) -> IO[str]:
-    """Open an EVE file for following.
+def _open_following(path: Path) -> tuple[IO[str], int]:
+    """Open an EVE file for following, returning the handle and its inode.
 
-    Suricata rotates ``eve.json`` by renaming it, so the tailer re-opens rather than
-    reading a descriptor to a file nobody writes to any more.
+    Suricata rotates ``eve.json`` by renaming it, so the tailer compares the inode and
+    re-opens rather than reading a descriptor to a file nobody writes to any more.
     """
-    return path.open(encoding="utf-8", errors="replace")
+    handle = path.open(encoding="utf-8", errors="replace")
+    return handle, path.stat().st_ino
 
 
 def _optional_str(value: object) -> str | None:

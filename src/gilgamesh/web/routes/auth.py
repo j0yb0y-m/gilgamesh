@@ -16,6 +16,7 @@ from gilgamesh.web.deps import (
     require_session,
     set_session_cookie,
     templates,
+    verify_csrf,
 )
 
 router = APIRouter()
@@ -37,17 +38,34 @@ async def setup_submit(
     request: Request,
     session: Annotated[Session | None, Depends(current_session)],
 ) -> Response:
-    """Create the first administrator and sign in."""
+    """Create the first administrator and sign in.
+
+    The setup token from the journal is required: until the owner has claimed the box,
+    anyone who can reach the port could otherwise become the administrator.
+    """
     auth: AuthService = request.app.state.auth
     if session is not None or not auth.needs_setup():
         raise Redirect("/")
     form = await read_form(request)
+    if not auth.verify_setup_token(form.get("setup_token", "")):
+        return templates.TemplateResponse(
+            request=request,
+            name="setup.html",
+            context={
+                "error": (
+                    "Setup token is missing or wrong. It is printed in the service log: "
+                    "journalctl -u gilgamesh-web | grep setup"
+                )
+            },
+            status_code=400,
+        )
     try:
         user = auth.create_user(form.get("username", "").strip(), form.get("password", ""))
     except (PasswordPolicyError, ValueError) as exc:
         return templates.TemplateResponse(
             request=request, name="setup.html", context={"error": str(exc)}, status_code=400
         )
+    auth.clear_setup_token()
     new_session = auth.start_session(user)
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     set_session_cookie(response, new_session.sid, request)
@@ -88,7 +106,7 @@ async def login_submit(
     return response
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=[Depends(verify_csrf)])
 async def logout(
     request: Request, session: Annotated[Session, Depends(require_session)]
 ) -> Response:

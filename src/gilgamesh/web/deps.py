@@ -11,7 +11,7 @@ silently degrades into a query parameter and reports as a puzzling ``422``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import parse_qs
 
 from fastapi import Depends, HTTPException, Request, status
@@ -31,7 +31,44 @@ SESSION_COOKIE_MAX_AGE = 12 * 3600
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _URLENCODED = "application/x-www-form-urlencoded"
 
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+def asset_version(directory: Path | None = None) -> str:
+    """A short stamp that changes whenever a served asset changes.
+
+    The vendored CSS/JS keep their file names across upgrades, so after ``install.sh``
+    a browser can keep executing the *previous* ``app.js`` — the owner then sees the old
+    behaviour with no clue why. Querying each asset by this stamp gives every asset a URL
+    that changes exactly when its bytes do, which is the one cache-busting mechanism that
+    does not depend on a browser's revalidation heuristics. The response also carries
+    ``Cache-Control: no-cache`` (see
+    :class:`~gilgamesh.web.middleware.SecurityHeadersMiddleware`), so an unchanged asset
+    still costs only a ``304``.
+
+    Computed once per process: assets change with a deployment, and a deployment restarts
+    the service.
+    """
+    root = STATIC_DIR if directory is None else directory
+    newest = 0.0
+    total = 0
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            info = path.stat()
+            newest = max(newest, info.st_mtime)
+            total += info.st_size
+    return f"{int(newest):x}.{total:x}"
+
+
+#: The stamp every rendered page carries. See :func:`asset_version`.
+ASSET_VERSION = asset_version()
+
+
+def _asset_context(request: Request) -> dict[str, Any]:
+    """Expose the asset stamp to every template (``?v={{ asset_version }}``)."""
+    del request  # only here for the context-processor contract
+    return {"asset_version": ASSET_VERSION}
+
+
+templates = Jinja2Templates(directory=TEMPLATES_DIR, context_processors=[_asset_context])
 
 
 class Redirect(Exception):
@@ -78,17 +115,37 @@ def require_session(request: Request) -> Session:
     raise Redirect("/setup" if auth.needs_setup() else "/login")
 
 
+def _is_cross_site(request: Request) -> bool:
+    """Whether browser request metadata says the submission came from another site.
+
+    ``Sec-Fetch-Site`` is authoritative when the browser sends it; ``Origin`` is the
+    fallback. Requests with neither header (curl, scripts, tests) are not blocked here —
+    the token check below still applies to them.
+    """
+    fetch_site = request.headers.get("sec-fetch-site")
+    if fetch_site is not None:
+        return fetch_site not in {"same-origin", "none"}
+    origin = request.headers.get("origin")
+    if origin:
+        return origin.rstrip("/") != str(request.base_url).rstrip("/")
+    return False
+
+
 async def verify_csrf(
     request: Request,
     session: Annotated[Session, Depends(require_session)],
 ) -> None:
     """Reject unsafe requests that do not carry the session's CSRF token.
 
-    Registered as a dependency on every state-changing route, so a new route is
-    protected by construction rather than by remembering.
+    Two independent checks: the browser metadata rejected here, and the session's
+    synchronizer token verified below. Registered as a dependency on every
+    state-changing route, so a new route is protected by construction rather than by
+    remembering.
     """
     if request.method not in _UNSAFE_METHODS:
         return
+    if _is_cross_site(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "cross-site request rejected")
     supplied = request.headers.get("X-CSRF-Token")
     if supplied is None and request.method == "POST":
         supplied = (await read_form(request)).get("csrf_token") or None
@@ -115,11 +172,13 @@ def set_session_cookie(response: Response, sid: str, request: Request) -> None:
 
 
 __all__ = [
+    "ASSET_VERSION",
     "SESSION_COOKIE",
     "SESSION_COOKIE_MAX_AGE",
     "STATIC_DIR",
     "TEMPLATES_DIR",
     "Redirect",
+    "asset_version",
     "current_session",
     "read_form",
     "require_session",

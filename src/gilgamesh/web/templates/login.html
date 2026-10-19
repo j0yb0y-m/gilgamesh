@@ -3,17 +3,39 @@
 {% block title %}Sign in — Gilgamesh{% endblock %}
 
 {% block content %}
-<section id="login">
-  <h2>Sign in</h2>
+<section id="login" class="mx-auto max-w-sm">
+  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Sign in</h1>
 
-  <form method="post" action="/login">
-    <label for="username">Username</label>
-    <input id="username" name="username" type="text" autocomplete="username" required />
+  <form method="post" action="/login" class="grid gap-4">
+    <label class="text-sm">
+      Username
+      <input
+        id="username"
+        name="username"
+        type="text"
+        autocomplete="username"
+        required
+        class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+      />
+    </label>
 
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <label class="text-sm">
+      Password
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+        class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+      />
+    </label>
 
-    <button type="submit">Sign in</button>
+    <div>
+      <button type="submit" class="rounded bg-slate-900 px-3 py-1 text-sm text-white">
+        Sign in
+      </button>
+    </div>
   </form>
 </section>
 {% endblock %}

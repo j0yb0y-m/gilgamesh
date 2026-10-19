@@ -24,6 +24,7 @@ from starlette.types import ASGIApp, Message
 from gilgamesh.config import Settings
 from gilgamesh.db import Database
 from gilgamesh.models import Event, EventType, Severity
+from gilgamesh.web import deps
 from gilgamesh.web.app import create_app
 from gilgamesh.web.sse import EventBus
 
@@ -34,9 +35,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     with TestClient(create_app(Settings(data_dir=tmp_path))) as test_client:
-        test_client.post(
-            "/setup", data={"username": "admin", "password": PASSWORD}, follow_redirects=False
+        auth = cast(FastAPI, test_client.app).state.auth
+        token = auth.ensure_setup_token()
+        response = test_client.post(
+            "/setup",
+            data={"username": "admin", "password": PASSWORD, "setup_token": token},
+            follow_redirects=False,
         )
+        assert response.status_code == 303
         yield test_client
 
 
@@ -291,6 +297,50 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert client.get("/static/js/vendor/alpine-csp.min.js").status_code == 200
 
 
+def test_static_assets_are_revalidated_instead_of_cached_blindly(client: TestClient) -> None:
+    """The vendored assets keep their names across upgrades.
+
+    Without this header a browser may reuse the app.js it downloaded before
+    `install.sh` shipped a new one — the owner would see the old behaviour with no clue
+    why. Starlette sends an ETag, so revalidating costs a 304, not a re-download.
+    """
+    response = client.get("/static/js/app.js")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-cache"
+    assert response.headers.get("ETag")
+
+
+def test_html_is_never_stored_by_the_browser(client: TestClient) -> None:
+    assert client.get("/").headers["Cache-Control"] == "no-store"
+
+
+def test_every_asset_url_carries_the_content_stamp(client: TestClient) -> None:
+    """Belt and braces with the `no-cache` header: a *changed* asset is a new URL.
+
+    Browsers are free to ignore revalidation heuristics; they cannot ignore a URL that
+    has never been requested. If this fails, an upgraded Pi can keep serving the
+    previous app.js/CSS to the owner's browser without any visible symptom.
+    """
+    body = client.get("/login").text
+    stamp = deps.asset_version()
+
+    assert stamp
+    for asset in ("/static/css/app.css", "/static/js/app.js", "/static/js/vendor/htmx.min.js"):
+        assert f"{asset}?v={stamp}" in body, asset
+    assert "/static/favicon.svg?v=" in body
+
+
+def test_the_content_stamp_tracks_the_files(tmp_path: Path) -> None:
+    asset = tmp_path / "app.js"
+    asset.write_text("first", encoding="utf-8")
+    before = deps.asset_version(tmp_path)
+
+    asset.write_text("second version, longer", encoding="utf-8")
+
+    assert deps.asset_version(tmp_path) != before
+
+
 def test_no_external_urls_anywhere_in_templates() -> None:
     """Offline-first (C5): no CDN, no external fonts, no remote scripts."""
     offenders: list[str] = []
@@ -299,6 +349,29 @@ def test_no_external_urls_anywhere_in_templates() -> None:
         text = template.read_text(encoding="utf-8")
         if pattern.search(text):
             offenders.append(template.name)
+    assert offenders == []
+
+
+def test_no_template_ships_an_unstyled_form_control() -> None:
+    """Every visible control carries design-system classes.
+
+    The audit found three pages rendering as raw HTML — sign-in, first-run setup and the
+    allowlist — because they were the only templates whose markup skipped the class
+    vocabulary the rest of the app shares. Two of those are the first screens a new owner
+    sees, and the styling is an acceptance criterion, not decoration. Hidden inputs are
+    exempt: they are never painted.
+    """
+    offenders: list[str] = []
+    pattern = re.compile(r"<(input|select|button|label|table)\b[^>]*>")
+    for template in sorted((REPO_ROOT / "src/gilgamesh/web/templates").glob("*.html")):
+        text = template.read_text(encoding="utf-8")
+        for match in pattern.finditer(text):
+            tag = match.group(0)
+            if tag.startswith("<input") and 'type="hidden"' in tag:
+                continue
+            if 'class="' not in tag:
+                offenders.append(f"{template.name}: {tag.splitlines()[0][:70]}")
+
     assert offenders == []
 
 
@@ -389,6 +462,23 @@ def test_dashboard_links_to_the_live_stream(client: TestClient) -> None:
 
     assert 'id="live-feed"' in body
     assert "/events/stream" in (REPO_ROOT / "static/js/app.js").read_text(encoding="utf-8")
+
+
+def test_dashboard_carries_the_alpine_feed_control(client: TestClient) -> None:
+    """The pause control is an Alpine CSP component, registered by name in app.js.
+
+    Only the wiring is asserted here; that it actually initialises in a browser (and
+    under the real CSP) is what the Playwright end-to-end test checks.
+    """
+    body = client.get("/").text
+    script = (REPO_ROOT / "static/js/app.js").read_text(encoding="utf-8")
+
+    assert 'x-data="liveFeed"' in body
+    assert '@click="toggle"' in body
+    assert 'x-text="buttonLabel"' in body
+    assert 'window.Alpine.data("liveFeed"' in script
+    # No inline expression can survive the CSP build, so the component must not use one.
+    assert "x-show=" not in body
 
 
 def test_sse_frame_is_valid_json(client: TestClient) -> None:

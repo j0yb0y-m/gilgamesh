@@ -4,65 +4,102 @@
 
 {% block content %}
 <section id="suppressions">
-  <h2>Allowlist</h2>
-  <p>
+  <h1 class="mb-4 text-2xl font-semibold text-slate-900">Allowlist</h1>
+
+  {% if notice %}
+    <p role="status" class="mb-4 rounded border border-emerald-300 bg-emerald-50 p-2 text-emerald-800">
+      {{ notice }}
+    </p>
+  {% endif %}
+
+  <p class="mb-4 text-sm text-slate-600">
     Ignore events from a source you already know about. Entries match exactly — there
     are no patterns, so an entry can never accidentally silence more than you intended.
+    An entry silences only the rule it names; other rules still alert about the same
+    device.
   </p>
 
-  {% if notice %}<p role="status">{{ notice }}</p>{% endif %}
-
-  <form method="post" action="/suppressions">
+  <form method="post" action="/suppressions" class="mb-8 max-w-xl">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
 
-    <label for="rule_id">Rule</label>
-    <select id="rule_id" name="rule_id" required>
-      {% for definition in catalogue.definitions() %}
-        <option value="{{ definition.id }}">{{ definition.name }}</option>
-      {% endfor %}
-    </select>
+    <div class="grid grid-cols-2 gap-3">
+      <label class="text-sm">
+        Rule
+        <select name="rule_id" required class="mt-1 w-full rounded border border-slate-300 px-2 py-1">
+          {% for definition in catalogue.definitions() %}
+            <option value="{{ definition.id }}">{{ definition.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
 
-    <label for="field">Match on</label>
-    <select id="field" name="field" required>
-      <option value="src_mac">Source MAC address</option>
-      <option value="src_ip">Source IP address</option>
-      <option value="dst_ip">Destination IP address</option>
-      <option value="detector">Detector name</option>
-      <option value="any">Anything from this rule</option>
-    </select>
+      <label class="text-sm">
+        Match on
+        <select name="field" required class="mt-1 w-full rounded border border-slate-300 px-2 py-1">
+          <option value="src_mac">Source MAC address</option>
+          <option value="src_ip">Source IP address</option>
+          <option value="dst_ip">Destination IP address</option>
+          <option value="detector">Detector name</option>
+          <option value="any">Anything from this rule</option>
+        </select>
+      </label>
+    </div>
 
-    <label for="value">Value</label>
-    <input id="value" name="value" type="text" required placeholder="de:ad:be:ef:00:01" />
+    <div class="mt-3 grid grid-cols-2 gap-3">
+      <label class="text-sm">
+        Value
+        <input
+          name="value"
+          type="text"
+          required
+          placeholder="de:ad:be:ef:00:01"
+          class="mt-1 w-full rounded border border-slate-300 px-2 py-1 font-mono text-sm"
+        />
+      </label>
+      <label class="text-sm">
+        Note (optional)
+        <input
+          name="note"
+          type="text"
+          placeholder="Living-room TV"
+          class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+        />
+      </label>
+    </div>
 
-    <label for="note">Note (optional)</label>
-    <input id="note" name="note" type="text" placeholder="Living-room TV" />
-
-    <button type="submit">Add to allowlist</button>
+    <div class="mt-4">
+      <button type="submit" class="rounded bg-slate-900 px-3 py-1 text-sm text-white">
+        Add to allowlist
+      </button>
+    </div>
   </form>
 
+  <h2 class="mb-2 text-lg font-semibold text-slate-900">Entries</h2>
+
   {% if suppressions %}
-    <table>
+    <table class="w-full border-collapse text-sm">
       <thead>
-        <tr>
-          <th>Rule</th>
-          <th>Match</th>
-          <th>Value</th>
-          <th>Note</th>
-          <th></th>
+        <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+          <th class="py-2 pr-3">Rule</th>
+          <th class="py-2 pr-3">Match</th>
+          <th class="py-2 pr-3">Value</th>
+          <th class="py-2 pr-3">Note</th>
+          <th class="py-2"></th>
         </tr>
       </thead>
       <tbody>
         {% for suppression in suppressions %}
-          <tr>
-            <td>{{ suppression.rule_id }}</td>
-            <td>{{ suppression.field }}</td>
-            <td><code>{{ suppression.value }}</code></td>
-            <td>{{ suppression.note }}</td>
-            <td>
+          <tr class="border-b border-slate-100 align-top">
+            <td class="py-2 pr-3 text-slate-700">{{ suppression.rule_id }}</td>
+            <td class="py-2 pr-3 text-slate-700">{{ suppression.field }}</td>
+            <td class="py-2 pr-3"><code class="text-xs text-slate-500">{{ suppression.value }}</code></td>
+            <td class="py-2 pr-3 text-slate-700">{{ suppression.note or "—" }}</td>
+            <td class="py-2">
               <form method="post" action="/suppressions/delete">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
                 <input type="hidden" name="id" value="{{ suppression.id }}" />
-                <button type="submit">Remove</button>
+                <button type="submit" class="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700">
+                  Remove
+                </button>
               </form>
             </td>
           </tr>
@@ -70,9 +107,11 @@
       </tbody>
     </table>
   {% else %}
-    <p>No allowlist entries yet.</p>
+    <p class="text-sm text-slate-500">No allowlist entries yet.</p>
   {% endif %}
 
-  <p><a href="/rules">Back to detection rules</a></p>
+  <p class="mt-6 text-sm">
+    <a class="underline" href="/rules">Back to detection rules</a>
+  </p>
 </section>
 {% endblock %}

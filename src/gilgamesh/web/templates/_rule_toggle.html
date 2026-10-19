@@ -1,0 +1,30 @@
+{#- One rule's enable/disable control.
+
+    This fragment is served twice: inside the full Rules page, and (when the request
+    carries the `HX-Request` header) on its own as the response to an htmx POST. Keeping
+    one renderer for both is what stops the live toggle and the no-JavaScript fallback
+    from drifting apart.
+
+    The plain form still works with JavaScript disabled: `action`/`method` post and the
+    route answers with the whole page. With htmx loaded, the same POST is swapped in
+    place (`hx-swap="outerHTML"`) — and because the swapped markup carries the same
+    htmx attributes, the *next* click is live too. -#}
+<form
+  id="toggle-{{ item.definition.id }}"
+  method="post"
+  action="/rules/toggle"
+  hx-post="/rules/toggle"
+  hx-target="this"
+  hx-swap="outerHTML"
+>
+  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+  <input type="hidden" name="rule_id" value="{{ item.definition.id }}" />
+  <input type="hidden" name="enabled" value="{{ 0 if item.setting.enabled else 1 }}" />
+  <button type="submit" class="rounded border border-slate-300 px-2 py-1 text-sm text-slate-700">
+    {{ "Disable" if item.setting.enabled else "Enable" }}
+  </button>
+  {#- The state stays lower case and inline: `inner_text()` in the browser tests reads the
+      rendered text, and `uppercase` here would make it "ON"/"OFF" to both the tests and
+      any screen reader that spells out capitals. -#}
+  <span class="state ml-2 text-xs tracking-wide text-slate-500">{{ "on" if item.setting.enabled else "off" }}</span>
+</form>

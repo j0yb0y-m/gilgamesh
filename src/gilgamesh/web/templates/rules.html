@@ -18,56 +18,68 @@
       <h3>{{ item.definition.name }}</h3>
       <p>{{ item.definition.description }}</p>
 
-      <form method="post" action="/rules/toggle">
-        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
-        <input type="hidden" name="rule_id" value="{{ item.definition.id }}" />
-        <input type="hidden" name="enabled" value="{{ 0 if item.setting.enabled else 1 }}" />
-        <button type="submit">
-          {{ "Disable" if item.setting.enabled else "Enable" }}
-        </button>
-        <span class="state">{{ "on" if item.setting.enabled else "off" }}</span>
-      </form>
+      {% include "_rule_toggle.html" %}
 
       {% if item.definition.params %}
-        <form method="post" action="/rules/params">
+        <form method="post" action="/rules/params" class="mt-3 flex flex-wrap items-end gap-4 text-sm">
           <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
           <input type="hidden" name="rule_id" value="{{ item.definition.id }}" />
           {% for spec in item.definition.params %}
-            <label for="{{ item.definition.id }}-{{ spec.name }}">
-              {{ spec.label or spec.name }}
-            </label>
             {% if spec.kind == "bool" %}
-              <input
-                id="{{ item.definition.id }}-{{ spec.name }}"
-                name="{{ spec.name }}"
-                type="checkbox"
-                {% if item.setting.params[spec.name] %}checked{% endif %}
-              />
+              <div class="flex items-center gap-2">
+                <input
+                  id="{{ item.definition.id }}-{{ spec.name }}"
+                  name="{{ spec.name }}"
+                  type="checkbox"
+                  class="rounded border-slate-300"
+                  {% if item.setting.params[spec.name] %}checked{% endif %}
+                />
+                <label class="text-sm" for="{{ item.definition.id }}-{{ spec.name }}">
+                  {{ spec.label or spec.name }}
+                </label>
+              </div>
             {% elif spec.kind == "enum" %}
-              <select id="{{ item.definition.id }}-{{ spec.name }}" name="{{ spec.name }}">
-                {% for choice in spec.choices %}
-                  <option
-                    value="{{ choice }}"
-                    {% if item.setting.params[spec.name] == choice %}selected{% endif %}
-                  >
-                    {{ choice }}
-                  </option>
-                {% endfor %}
-              </select>
+              <div>
+                <label class="text-sm" for="{{ item.definition.id }}-{{ spec.name }}">
+                  {{ spec.label or spec.name }}
+                </label>
+                <select
+                  id="{{ item.definition.id }}-{{ spec.name }}"
+                  name="{{ spec.name }}"
+                  class="mt-1 block rounded border border-slate-300 px-2 py-1"
+                >
+                  {% for choice in spec.choices %}
+                    <option
+                      value="{{ choice }}"
+                      {% if item.setting.params[spec.name] == choice %}selected{% endif %}
+                    >
+                      {{ choice }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
             {% else %}
-              <input
-                id="{{ item.definition.id }}-{{ spec.name }}"
-                name="{{ spec.name }}"
-                type="{{ 'number' if spec.kind == 'int' else 'number' }}"
-                step="{{ 1 if spec.kind == 'int' else 'any' }}"
-                {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
-                {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}
-                value="{{ item.setting.params[spec.name] }}"
-              />
+              <div>
+                <label class="text-sm" for="{{ item.definition.id }}-{{ spec.name }}">
+                  {{ spec.label or spec.name }}
+                </label>
+                <input
+                  id="{{ item.definition.id }}-{{ spec.name }}"
+                  name="{{ spec.name }}"
+                  type="number"
+                  step="{{ 1 if spec.kind == 'int' else 'any' }}"
+                  {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
+                  {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}
+                  value="{{ item.setting.params[spec.name] }}"
+                  class="mt-1 block w-32 rounded border border-slate-300 px-2 py-1"
+                />
+              </div>
             {% endif %}
-            {% if spec.help %}<span class="hint">{{ spec.help }}</span>{% endif %}
+            {% if spec.help %}<span class="w-full text-xs text-slate-500">{{ spec.help }}</span>{% endif %}
           {% endfor %}
-          <button type="submit">Save thresholds</button>
+          <button type="submit" class="rounded border border-slate-300 px-3 py-1 text-sm">
+            Save thresholds
+          </button>
         </form>
       {% endif %}
     </article>

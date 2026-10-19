@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
-from gilgamesh.models import EventType, Severity
+from gilgamesh.models import Event, EventType, Severity
 from gilgamesh.sensors.suricata_ingest import (
     EveIngestor,
     RuleSetting,
@@ -271,3 +273,70 @@ def test_render_conf_writes_files_atomically(tmp_path: Path) -> None:
 
     assert target.exists()
     assert f"{GID}:{SID}" in target.read_text()
+
+
+# --- following the live log ---------------------------------------------------
+#
+# The tailer runs in a thread started by the sensor service, so it must survive the two
+# situations boot actually produces: Suricata has not created its log yet, and the file
+# keeps growing afterwards. Both are driven here with a real thread and a poll interval
+# shortened through the module constant, so the tests stay fast without changing code.
+
+
+def _collect(ingestor: EveIngestor, path: Path, stop: threading.Event, out: list[Event]) -> None:
+    for event in ingestor.follow(path, stop):
+        out.append(event)
+
+
+def test_follow_waits_for_a_log_that_appears_later(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At boot the sensor starts before Suricata; the tailer must not give up."""
+    from gilgamesh.sensors import suricata_ingest
+
+    monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
+    path = tmp_path / "eve.json"
+    stop = threading.Event()
+    seen: list[Event] = []
+    thread = threading.Thread(target=_collect, args=(EveIngestor(), path, stop, seen))
+    thread.start()
+    try:
+        time.sleep(0.1)  # several polls with no file at all
+        path.write_text(alert_line(signature="arrived after boot") + "\n")
+        deadline = time.monotonic() + 5.0
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.02)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert [event.details["signature"] for event in seen] == ["arrived after boot"]
+
+
+def test_follow_yields_lines_appended_to_an_existing_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gilgamesh.sensors import suricata_ingest
+
+    monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
+    path = tmp_path / "eve.json"
+    path.write_text(alert_line(signature="first") + "\n")
+    stop = threading.Event()
+    seen: list[Event] = []
+    thread = threading.Thread(target=_collect, args=(EveIngestor(), path, stop, seen))
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while len(seen) < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(alert_line(signature="second") + "\n")
+        deadline = time.monotonic() + 5.0
+        while len(seen) < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+
+    assert [event.details["signature"] for event in seen] == ["first", "second"]

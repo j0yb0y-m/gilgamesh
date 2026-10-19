@@ -3,27 +3,71 @@
 {% block title %}First-run setup — Gilgamesh{% endblock %}
 
 {% block content %}
-<section id="setup">
-  <h2>Welcome to Gilgamesh</h2>
-  <p>
-    Gilgamesh watches your home network and tells you when something looks wrong.
-    First, create the administrator account. There is only one account in v1 — anyone
-    who can sign in can change how detection works.
+<section id="setup" class="max-w-xl">
+  <h1 class="mb-2 text-2xl font-semibold text-slate-900">Welcome to Gilgamesh</h1>
+  <p class="mb-6 text-sm text-slate-600">
+    Gilgamesh watches your home network and tells you when something looks wrong. First,
+    create the administrator account. There is only one account in v1 — anyone who can
+    sign in can change how detection works.
   </p>
 
-  <form method="post" action="/setup">
-    <label for="username">Administrator username</label>
-    <input id="username" name="username" type="text" autocomplete="username" required />
+  <form method="post" action="/setup" class="grid gap-4">
+    <div>
+      <label class="text-sm">
+        Setup token
+        <input
+          id="setup_token"
+          name="setup_token"
+          type="text"
+          autocomplete="off"
+          required
+          class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+        />
+      </label>
+      <span class="mt-1 block text-xs text-slate-500">
+        Printed in the service log at start-up:
+        <code class="rounded bg-slate-100 px-1 font-mono">journalctl -u gilgamesh-web | grep setup</code>.
+        It proves you are at the box itself, not merely someone on the network who found
+        the port open.
+      </span>
+    </div>
 
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="new-password" required />
-    <p class="hint">
-      Use a passphrase of at least 20 characters, or 12 characters mixing lower case,
-      upper case, digits, and symbols. A long sentence is easier to remember and
-      stronger than <code>Passw0rd!</code>.
-    </p>
+    <label class="text-sm">
+      Administrator username
+      <input
+        id="username"
+        name="username"
+        type="text"
+        autocomplete="username"
+        required
+        class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+      />
+    </label>
 
-    <button type="submit">Create account</button>
+    <div>
+      <label class="text-sm">
+        Password
+        <input
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="new-password"
+          required
+          class="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+        />
+      </label>
+      <span class="mt-1 block text-xs text-slate-500">
+        Use a passphrase of at least 20 characters, or 12 characters mixing lower case,
+        upper case, digits, and symbols. A long sentence is easier to remember and
+        stronger than <code class="rounded bg-slate-100 px-1 font-mono">Passw0rd!</code>.
+      </span>
+    </div>
+
+    <div>
+      <button type="submit" class="rounded bg-slate-900 px-3 py-1 text-sm text-white">
+        Create account
+      </button>
+    </div>
   </form>
 </section>
 {% endblock %}

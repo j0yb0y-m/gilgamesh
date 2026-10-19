@@ -4,11 +4,27 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Gilgamesh{% endblock %}</title>
-    {# Everything is vendored: no CDN links and no external fonts (constraint C5). #}
-    <link rel="stylesheet" href="/static/css/app.css" />
-    <script src="/static/js/vendor/htmx.min.js" defer></script>
-    <script src="/static/js/vendor/alpine-csp.min.js" defer></script>
-    <script src="/static/js/app.js" defer></script>
+    {# Everything is vendored: no CDN links and no external fonts (constraint C5).
+       `?v=` is a content stamp (web/deps.py: asset_version): it changes whenever the
+       files do, so a browser that cached the previous asset can never keep running it
+       after an upgrade. #}
+    <link rel="icon" href="/static/favicon.svg?v={{ asset_version }}" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}" />
+    {# htmx injects its indicator stylesheet as an inline <style>, which our CSP
+       (style-src 'self') blocks; the feature is unused, so switch it off. #}
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}' />
+    {#- Load order matters, and this is the one place to get it right.
+
+        app.js runs *before* Alpine on purpose: the vendored CDN build of Alpine starts
+        itself (`queueMicrotask(() => Alpine.start())`) as soon as it has evaluated, and
+        `alpine:init` — the documented moment to register components — fires during that
+        start. A listener added afterwards never sees the event, so `x-data="liveFeed"`
+        would be evaluated against an empty registry ("Undefined variable: liveFeed").
+        Loading our script first registers the listener in time. htmx has no such
+        requirement; it processes the DOM on DOMContentLoaded. -#}
+    <script src="/static/js/app.js?v={{ asset_version }}" defer></script>
+    <script src="/static/js/vendor/htmx.min.js?v={{ asset_version }}" defer></script>
+    <script src="/static/js/vendor/alpine-csp.min.js?v={{ asset_version }}" defer></script>
   </head>
   <body hx-headers='{"X-CSRF-Token": "{{ session.csrf_token if session else "" }}"}'>
     <header class="border-b border-slate-200 bg-slate-50">

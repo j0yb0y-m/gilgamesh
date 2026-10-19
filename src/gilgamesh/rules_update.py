@@ -1,16 +1,23 @@
 """Update the Suricata rules and reload them.
 
-This is the one place that turns the owner's rule choices into a running ruleset, and
-both fronts call it: the ``gilgamesh-rules-update`` oneshot (run by a daily systemd
-timer, and by hand) and the "Update rules" button on the Health page. Keeping it in the
-library means the button and the unit can never drift apart.
+This is the one place that turns "the rules may be out of date" into "the ruleset is
+current", and both fronts call it: the ``gilgamesh-rules-update`` oneshot (run by a
+daily systemd timer, and by hand) and the "Update rules" button on the Health page.
+Keeping it in the library means the button and the unit can never drift apart.
 
-Three things happen, in order, and any failure is *reported*, never raised:
+Two things happen, in order, and any failure is *reported*, never raised:
 
-1. the owner's enabled/disabled choices are rendered into ``suricata-update``'s filter
-   files (``disable.conf`` / ``enable.conf``);
-2. ``suricata-update`` fetches and installs the ruleset;
-3. ``suricatasc -c reload-rules`` tells a running Suricata to pick them up.
+1. ``suricata-update`` fetches and installs the ruleset;
+2. ``suricatasc -c reload-rules`` tells a running Suricata to pick them up.
+
+**Why the filter files are not touched.** ``disable.conf`` / ``enable.conf`` are
+``suricata-update``'s per-signature filters, and Gilgamesh has no per-signature UI in
+v1 — only the whole ``suricata.alerts`` rule. An earlier version of this module wrote
+empty filter files on every run whenever no signature state existed, which silently
+re-enabled every signature the deployment had disabled and overwrote local edits. The
+files are therefore left exactly as the operator maintains them; when per-signature
+control is implemented (D-017) its renderers are already in place and tested, in
+``gilgamesh.sensors.suricata_ingest``.
 
 Every external command is a fixed argv built by us — never a shell string, and never
 anything that came from a request — and runs with a timeout.
@@ -19,27 +26,23 @@ anything that came from a request — and runs with a timeout.
 from __future__ import annotations
 
 import contextlib
+import logging
 import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from gilgamesh.config import Settings
-from gilgamesh.rules import RuleConfigService
-from gilgamesh.sensors.suricata_ingest import (
-    RuleSetting as SuricataRuleSetting,
-)
-from gilgamesh.sensors.suricata_ingest import (
-    render_disable_conf,
-    render_enable_conf,
-    suricatasc_reload_command,
-)
+from gilgamesh.sensors.suricata_ingest import suricatasc_reload_command
+from gilgamesh.util.logging import configure_logging
 
 #: A runner takes an argv list and returns the completed process. Injectable so tests
 #: never shell out.
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +54,9 @@ class RulesUpdateResult:
     error: str | None = None
 
 
-def _default_runner(timeout: float) -> Runner:
+def default_runner(timeout: float) -> Runner:
+    """The real runner: a fixed argv, captured output, bounded by ``timeout``."""
+
     def run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603 - fixed argv, no shell, no request input
             list(command),
@@ -67,35 +72,20 @@ def _default_runner(timeout: float) -> Runner:
 def refresh_rules(
     *,
     settings: Settings,
-    rules: RuleConfigService,
     runner: Runner | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> RulesUpdateResult:
-    """Render the filters, run the updater, and reload. Returns the outcome."""
-    run = runner if runner is not None else _default_runner(timeout)
+    """Run the updater, reload Suricata, and report the outcome."""
+    run = runner if runner is not None else default_runner(timeout)
     steps: list[str] = []
-
-    config_dir = settings.suricata_config_dir
-    try:
-        config_dir.mkdir(parents=True, exist_ok=True)
-        # Convert UI rule settings to Suricata filter rule settings.
-        # For the MVP, only Suricata signature rules have gid:sid mappings;
-        # the UI's rule state is authoritative about enabled/disabled intent.
-        suricata_rules: list[SuricataRuleSetting] = []
-        # Try to build minimal list - for the full system, this would map
-        # from catalogue. For now, just pass empty list.
-        del suricata_rules
-        render_disable_conf([], config_dir / "disable.conf")
-        render_enable_conf([], config_dir / "enable.conf")
-    except OSError as exc:
-        return RulesUpdateResult(False, tuple(steps), f"cannot write filters: {exc}")
-    steps.append(f"filter files written to {config_dir}")
 
     try:
         updater = run([settings.suricata_update_command, "--no-test"])
     except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("suricata-update did not run: %s", exc)
         return RulesUpdateResult(False, tuple(steps), f"suricata-update did not run: {exc}")
     if updater.returncode != 0:
+        logger.warning("suricata-update exited %s", updater.returncode)
         return RulesUpdateResult(
             False,
             (*steps, f"suricata-update exited {updater.returncode}"),
@@ -139,19 +129,26 @@ def read_rules_version(settings: Settings) -> str | None:
 
 
 def main() -> None:
-    """Entry point for ``gilgamesh-rules-update`` service."""
-    from gilgamesh.config import Settings
-    from gilgamesh.db import Database
-    from gilgamesh.rules import RuleConfigService, default_catalogue
+    """Entry point for ``gilgamesh-rules-update`` service.
 
+    No database is needed any more: nothing about the ruleset depends on the owner's
+    stored settings (only Suricata's own filters do, and those are left alone). The
+    unit therefore runs without the state directory and reports failure by exit code.
+    """
+    configure_logging()
     settings = Settings()
-    db = Database(settings.db_path)
-    db.initialize()
-    service = RuleConfigService(db, default_catalogue())
-    result = refresh_rules(settings=settings, rules=service)
-    db.close()
+    result = refresh_rules(settings=settings)
     if not result.ok:
+        logger.error("rules update failed: %s", result.error)
         raise SystemExit(1)
+    logger.info("rules update finished: %s", ", ".join(result.steps))
 
 
-__all__ = ["RulesUpdateResult", "main", "read_rules_version", "refresh_rules"]
+__all__ = [
+    "DEFAULT_TIMEOUT_SECONDS",
+    "RulesUpdateResult",
+    "default_runner",
+    "main",
+    "read_rules_version",
+    "refresh_rules",
+]

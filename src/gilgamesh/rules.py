@@ -24,14 +24,18 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import cast
 
 from gilgamesh.db import Database
 from gilgamesh.models import Event, EventType
 from gilgamesh.util.net import normalize_mac
+
+logger = logging.getLogger(__name__)
 
 _KINDS = frozenset({"int", "float", "bool", "enum"})
 
@@ -493,6 +497,74 @@ _RULE_TYPES: dict[str, EventType] = {
     "suricata.alerts": EventType.SURICATA_ALERT,
 }
 
+#: Which rule produced an event, keyed by the ``details["reason"]`` the detectors set.
+#: Two ARP checks (unsolicited replies, Ethernet source mismatch) deliberately have no
+#: v1 rule of their own; they are absent here and therefore never gated.
+_REASON_RULES: dict[str, str] = {
+    "gateway_mac_changed": "arp.gateway_mac_changed",
+    "ip_mac_conflict": "arp.ip_mac_conflict",
+    "gratuitous_arp_flood": "arp.gratuitous_flood",
+    "rogue_dhcp_server": "dhcp.rogue_server",
+    "dhcp_config_drift": "dhcp.config_drift",
+    "dhcp_starvation": "dhcp.starvation",
+    "vertical_port_scan": "scan.vertical",
+    "horizontal_port_scan": "scan.horizontal",
+    "syn_flood": "scan.syn_flood",
+    "new_device": "inventory.new_device",
+    "response_without_matching_query": "dns.spoofing",
+    "untrusted_resolver": "dns.spoofing",
+    "conflicting_answers": "dns.spoofing",
+}
+
+
+def rule_id_for_event(event: Event) -> str | None:
+    """The catalogue rule that produced ``event``, when it can be told.
+
+    Every detector labels its output with a ``reason``; that label is the precise link
+    back to the rule the owner toggled. Suricata alerts carry a signature id instead,
+    and resolve by event type. Events whose rule cannot be told return ``None`` and are
+    never gated by rule settings.
+    """
+    reason = str(event.details.get("reason", ""))
+    known = _REASON_RULES.get(reason)
+    if known is not None:
+        return known
+    if event.type is EventType.SURICATA_ALERT:
+        return "suricata.alerts"
+    return None
+
+
+def suppression_applies(suppression: Suppression, event: Event) -> bool:
+    """Whether one allowlist entry silences ``event``.
+
+    Scope matters: when the event's originating rule is known, only that rule's
+    entries may match — an allowlist entry for ``arp.gateway_mac_changed`` must not
+    silence an IP/MAC conflict from the same detector. Events whose rule cannot be
+    told fall back to matching any rule sharing their event type, which keeps
+    hand-built events (and tests) working.
+    """
+    event_rule = rule_id_for_event(event)
+    if event_rule is not None:
+        if suppression.rule_id != event_rule:
+            return False
+    elif _RULE_TYPES.get(suppression.rule_id) is not event.type:
+        return False
+    return _suppression_matches_value(suppression, event)
+
+
+def _suppression_matches_value(suppression: Suppression, event: Event) -> bool:
+    if suppression.field is SuppressionField.ANY:
+        return True
+    actual = getattr(event, str(suppression.field), None)
+    if actual is None:
+        return False
+    if suppression.field is SuppressionField.SRC_MAC:
+        try:
+            return normalize_mac(str(actual)) == suppression.value
+        except ValueError:
+            return False
+    return str(actual) == suppression.value
+
 
 class RuleConfigService:
     """Reads and writes rule settings and allowlists, validated against the catalogue."""
@@ -505,11 +577,30 @@ class RuleConfigService:
     # --- settings ---------------------------------------------------------
 
     def settings(self) -> dict[str, RuleSetting]:
-        """Every rule's current state, defaults filled in for unset rules."""
-        stored = {
-            row["rule_id"]: (bool(row["enabled"]), json.loads(row["params"]))
-            for row in self._db.query("SELECT rule_id, enabled, params FROM rule_settings")
-        }
+        """Every rule's current state, defaults filled in for unset rules.
+
+        A row whose stored JSON cannot be read (hand-edited file, interrupted write,
+        schema from a future version) falls back to that rule's defaults instead of
+        raising: the Rules page must stay loadable and the sensor must stay startable.
+        """
+        stored: dict[str, tuple[bool, dict[str, int | float | bool | str]]] = {}
+        for row in self._db.query("SELECT rule_id, enabled, params FROM rule_settings"):
+            rule_id = str(row["rule_id"])
+            try:
+                raw = json.loads(row["params"])
+            except ValueError:
+                logger.warning("ignoring unreadable parameters for rule %s", rule_id)
+                raw = {}
+            if not isinstance(raw, dict):
+                logger.warning("ignoring non-object parameters for rule %s", rule_id)
+                raw = {}
+            params: dict[str, int | float | bool | str] = {}
+            for key, value in cast("dict[object, object]", raw).items():
+                if isinstance(key, str) and isinstance(value, (int, float, bool, str)):
+                    params[key] = value
+                else:
+                    logger.warning("ignoring unusable parameter %r for rule %s", key, rule_id)
+            stored[rule_id] = (bool(row["enabled"]), params)
         result: dict[str, RuleSetting] = {}
         for definition in self.catalogue.definitions():
             enabled, params = stored.get(definition.id, (definition.default_enabled, {}))
@@ -606,28 +697,4 @@ class RuleConfigService:
 
     def is_suppressed(self, event: Event) -> bool:
         """Whether an event is silenced by the allowlist."""
-        event_type = event.type
-        for suppression in self.suppressions():
-            if self._rule_event_type(suppression.rule_id) is not event_type:
-                continue
-            if self._matches(suppression, event):
-                return True
-        return False
-
-    @staticmethod
-    def _rule_event_type(rule_id: str) -> EventType | None:
-        return _RULE_TYPES.get(rule_id)
-
-    @staticmethod
-    def _matches(suppression: Suppression, event: Event) -> bool:
-        if suppression.field is SuppressionField.ANY:
-            return True
-        actual = getattr(event, str(suppression.field), None)
-        if actual is None:
-            return False
-        if suppression.field is SuppressionField.SRC_MAC:
-            try:
-                return normalize_mac(str(actual)) == suppression.value
-            except ValueError:
-                return False
-        return str(actual) == suppression.value
+        return any(suppression_applies(suppression, event) for suppression in self.suppressions())

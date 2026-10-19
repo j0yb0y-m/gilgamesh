@@ -73,7 +73,9 @@ ARP_REPLY = 2
 class ArpConfig:
     """Tunable thresholds. Defaults are proposals to be tuned on real traffic."""
 
-    gateway_ip: str
+    #: The home gateway's address. When ``None`` the gateway-specific check is skipped
+    #: (the sensor could not find the default route); every other check still runs.
+    gateway_ip: str | None = None
     #: Learned bindings are collected but not judged for this long after start-up.
     warmup_seconds: float = 300.0
     #: How long a request stays "answered", before a reply to it looks unsolicited.
@@ -191,7 +193,7 @@ class ArpDetector(PacketDetector):
 
     def _check_gateway_mac(self, frame: ArpPacket, warming_up: bool) -> list[Event]:
         """Alert when the gateway IP is claimed from a MAC other than the learned one."""
-        if frame.psrc != self._config.gateway_ip:
+        if self._config.gateway_ip is None or frame.psrc != self._config.gateway_ip:
             return []
         known = self._gateway_mac
         if known is None:
@@ -219,7 +221,7 @@ class ArpDetector(PacketDetector):
         The gateway IP is excluded: a changed gateway MAC is reported by
         :meth:`_check_gateway_mac`, which carries better evidence.
         """
-        if frame.psrc == self._config.gateway_ip:
+        if self._config.gateway_ip is not None and frame.psrc == self._config.gateway_ip:
             return []
         known = self._bindings.get(frame.psrc)
         if known is None or frame.hwsrc in known:

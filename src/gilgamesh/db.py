@@ -193,6 +193,72 @@ class Database:
             ).fetchall()
         return [_row_to_event(row) for row in rows]
 
+    def max_event_rowid(self) -> int:
+        """The highest ``rowid`` in ``events``, or 0 when the table is empty."""
+        rows = self.query("SELECT COALESCE(MAX(rowid), 0) AS n FROM events")
+        return int(rows[0]["n"])
+
+    def events_after_rowid(self, rowid: int, limit: int) -> list[tuple[int, Event]]:
+        """Events with a higher ``rowid`` than ``rowid``, oldest first.
+
+        ``rowid`` is the only strictly monotonic column here — ``ts`` can repeat at
+        millisecond resolution and is written by two processes — so it is the cursor
+        the delivery loop advances.
+        """
+        rows = self.query(
+            "SELECT rowid AS cursor_rowid, * FROM events "
+            "WHERE rowid > ? ORDER BY rowid ASC LIMIT ?",
+            (rowid, limit),
+        )
+        return [(int(row["cursor_rowid"]), _row_to_event(row)) for row in rows]
+
+    def get_setting(self, key: str) -> str | None:
+        """Read a value from ``app_settings``, or ``None`` when unset."""
+        rows = self.query("SELECT value FROM app_settings WHERE key = ?", (key,))
+        return str(rows[0]["value"]) if rows else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Write a value into ``app_settings``, replacing any previous one."""
+        self.execute(
+            """
+            INSERT INTO app_settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+
+    # --- retention -----------------------------------------------------------
+
+    def prune_events(self, before_ts: str, delivered_rowid: int | None = None) -> int:
+        """Delete events older than ``before_ts`` (ISO-8601) and return the count.
+
+        When ``delivered_rowid`` is given, rows beyond it are kept regardless of age:
+        the delivery loop has not seen them yet, and pruning must never lose an alert.
+        """
+        if delivered_rowid is None:
+            cursor = self.execute("DELETE FROM events WHERE ts < ?", (before_ts,))
+        else:
+            cursor = self.execute(
+                "DELETE FROM events WHERE ts < ? AND rowid <= ?",
+                (before_ts, delivered_rowid),
+            )
+        return int(cursor.rowcount or 0)
+
+    def prune_login_attempts(self, before_ts: float) -> int:
+        """Delete login-attempt rows older than ``before_ts`` and return the count."""
+        cursor = self.execute("DELETE FROM login_attempts WHERE ts < ?", (before_ts,))
+        return int(cursor.rowcount or 0)
+
+    def prune_audit_log(self, before_ts: float) -> int:
+        """Delete audit-log rows older than ``before_ts`` and return the count."""
+        cursor = self.execute("DELETE FROM audit_log WHERE created_ts < ?", (before_ts,))
+        return int(cursor.rowcount or 0)
+
+    def prune_expired_sessions(self, before_ts: float) -> int:
+        """Delete sessions whose last activity is older than ``before_ts``."""
+        cursor = self.execute("DELETE FROM sessions WHERE last_seen_ts < ?", (before_ts,))
+        return int(cursor.rowcount or 0)
+
     def get_event(self, event_id: str) -> Event | None:
         """Return a single event by id, or ``None`` if it does not exist."""
         conn = self._connect()

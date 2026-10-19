@@ -15,7 +15,8 @@ bounded stages, applied in this order (decision D-012):
    storm that uses many distinct keys (a scan sweeps thousands of addresses).
 5. **incident aggregation** — surviving events fold into an open incident,
    incrementing its count instead of creating a new alert. Once the count
-   reaches ``escalate_at`` the incident is re-announced at a higher severity.
+   reaches ``escalate_at`` the incident is re-announced **once**, at a higher
+   severity, and then stays aggregated until it closes.
 
 The pipeline is pure: it returns a :class:`PipelineResult` and never touches the
 database or the network. The caller decides what to do with the decision, which
@@ -86,6 +87,10 @@ class _KeyState:
     incident_id: int | None = None
     incident_count: int = 0
     incident_last_seen: float = 0.0
+    #: Whether this incident has already been re-announced at escalated severity.
+    #: Without it, every post-cooldown event re-escalated, so one sustained attack
+    #: alerted once per cooldown (every five minutes) instead of once.
+    incident_escalated: bool = False
 
 
 class Pipeline:
@@ -173,8 +178,9 @@ class Pipeline:
         if state.incident_id is not None and now - state.incident_last_seen < window:
             state.incident_count += 1
             state.incident_last_seen = now
-            if state.incident_count >= self._settings.escalate_at:
-                # Sustained attack: re-announce once, at a higher severity.
+            if state.incident_count >= self._settings.escalate_at and not state.incident_escalated:
+                # Sustained attack: re-announce **once**, at a higher severity.
+                state.incident_escalated = True
                 state.last_alert = now
                 return PipelineResult(
                     PipelineDecision.STORE,
@@ -193,5 +199,6 @@ class Pipeline:
         self._next_incident_id += 1
         state.incident_count = 1
         state.incident_last_seen = now
+        state.incident_escalated = False
         state.last_alert = now
         return PipelineResult(PipelineDecision.STORE, state.incident_id, 1, event.severity)

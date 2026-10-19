@@ -88,11 +88,11 @@
           </label>
           <div class="flex gap-4 text-sm">
             <label class="flex items-center gap-2">
-              <input type="checkbox" name="smtp_start_tls" {% if not card.record or card.record.config.get('smtp_start_tls', True) %}checked{% endif %} />
+              <input type="checkbox" name="smtp_start_tls" class="rounded border-slate-300" {% if not card.record or card.record.config.get('smtp_start_tls', True) %}checked{% endif %} />
               STARTTLS (port 587)
             </label>
             <label class="flex items-center gap-2">
-              <input type="checkbox" name="smtp_use_tls" {% if not card.record or card.record.config.get('smtp_use_tls', True) %}checked{% endif %} />
+              <input type="checkbox" name="smtp_use_tls" class="rounded border-slate-300" {% if not card.record or card.record.config.get('smtp_use_tls', True) %}checked{% endif %} />
               Implicit TLS (port 465)
             </label>
           </div>
@@ -100,7 +100,7 @@
 
         <div class="flex flex-wrap items-center gap-4 text-sm">
           <label class="flex items-center gap-2">
-            <input type="checkbox" name="enabled" {% if not card.record or card.record.enabled %}checked{% endif %} />
+            <input type="checkbox" name="enabled" class="rounded border-slate-300" {% if not card.record or card.record.enabled %}checked{% endif %} />
             Enabled
           </label>
           <label class="flex items-center gap-2">

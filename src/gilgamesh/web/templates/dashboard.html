@@ -22,10 +22,29 @@
   </a>
 </section>
 
-<section id="events">
-  <div class="mb-4 flex items-baseline justify-between">
+<section id="events" x-data="liveFeed">
+  <div class="mb-4 flex flex-wrap items-baseline justify-between gap-3">
     <h1 class="text-2xl font-semibold text-slate-900">Recent activity</h1>
-    <a class="text-sm text-slate-600 underline" href="/alerts">See all alerts</a>
+    <div class="flex items-center gap-3 text-sm">
+      {#- The pause control is an Alpine CSP component registered in app.js: the feed fills
+          in while the owner is reading it, and pausing is a client-side decision. It is
+          progressive enhancement — without JavaScript the feed still renders server-side,
+          only the button does nothing. -#}
+      <span id="feed-state" class="text-xs font-semibold uppercase text-slate-500" x-text="indicatorLabel">Live</span>
+      {#- `:hidden` rather than `x-show`: x-show writes an inline style, and this CSP has
+          no `unsafe-inline` for styles. The hidden attribute is plain HTML. -#}
+      <span id="feed-buffered" class="text-xs text-amber-700" :hidden="noBuffered" x-text="bufferedLabel"></span>
+      <button
+        type="button"
+        id="feed-toggle"
+        class="rounded border border-slate-300 px-2 py-1 text-slate-700 hover:border-slate-400"
+        @click="toggle"
+        x-text="buttonLabel"
+      >
+        Pause live feed
+      </button>
+      <a class="text-slate-600 underline" href="/alerts">See all alerts</a>
+    </div>
   </div>
 
   <ul id="live-feed" class="divide-y divide-slate-200 rounded border border-slate-200">
