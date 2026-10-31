@@ -27,7 +27,7 @@ from typing import Any
 
 from gilgamesh.models import Event, EventType, Severity
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -55,6 +55,26 @@ CREATE INDEX IF NOT EXISTS idx_events_ts          ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_type_ts     ON events(type, ts);
 CREATE INDEX IF NOT EXISTS idx_events_severity_ts ON events(severity, ts);
 CREATE INDEX IF NOT EXISTS idx_events_dedup_key   ON events(dedup_key);
+
+-- One row per detected incident. An incident is the *attack*, not the alert: a
+-- sustained ARP spoof updates this row's count and last_ts while storing at most a
+-- couple of event rows (the first alert and the escalated re-announcement). The
+-- database owns the id so it stays unique across sensor restarts.
+CREATE TABLE IF NOT EXISTS incidents (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    dedup_key  TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    severity   TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    src_ip     TEXT,
+    dst_ip     TEXT,
+    first_ts   TEXT NOT NULL,
+    last_ts    TEXT NOT NULL,
+    count      INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_last_ts    ON incidents(last_ts);
+CREATE INDEX IF NOT EXISTS idx_incidents_dedup_key  ON incidents(dedup_key);
 
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,12 +204,87 @@ class Database:
             )
         return event
 
+    # --- incidents -----------------------------------------------------------
+
+    def create_incident(self, event: Event, *, count: int = 1) -> int:
+        """Open an incident from the event that started it, returning the database id.
+
+        The id is ``AUTOINCREMENT`` so it remains unique across sensor restarts; the
+        pipeline's in-memory id is never used as a database key.
+        """
+        cursor = self.execute(
+            """
+            INSERT INTO incidents (
+                dedup_key, type, severity, summary, src_ip, dst_ip,
+                first_ts, last_ts, count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.dedup_key,
+                str(event.type),
+                str(event.severity),
+                event.summary,
+                event.src_ip,
+                event.dst_ip,
+                event.ts.isoformat(),
+                event.ts.isoformat(),
+                count,
+            ),
+        )
+        return int(cursor.lastrowid or 0)
+
+    def update_incident(
+        self,
+        incident_id: int,
+        *,
+        count: int,
+        last_ts: str,
+        severity: Severity | str | None = None,
+    ) -> None:
+        """Record another sighting of an incident.
+
+        ``severity`` is only passed when the incident was (re-)announced, so a later
+        quiet repeat cannot downgrade the escalated severity the owner was told about.
+        """
+        if severity is None:
+            self.execute(
+                "UPDATE incidents SET count = ?, last_ts = ? WHERE id = ?",
+                (count, last_ts, incident_id),
+            )
+        else:
+            self.execute(
+                "UPDATE incidents SET count = ?, last_ts = ?, severity = ? WHERE id = ?",
+                (count, last_ts, str(severity), incident_id),
+            )
+
+    def get_incident(self, incident_id: int) -> sqlite3.Row | None:
+        """Return one incident row, or ``None``."""
+        rows = self.query("SELECT * FROM incidents WHERE id = ?", (incident_id,))
+        return rows[0] if rows else None
+
+    def prune_incidents(self, before_ts: str) -> int:
+        """Delete incidents whose last sighting is older than ``before_ts``.
+
+        An incident is kept while any event still references it. Retention deliberately
+        keeps an undelivered event past its cutoff, and deleting the incident first would
+        silently reset that alert's "seen N times" to one.
+        """
+        cursor = self.execute(
+            "DELETE FROM incidents WHERE last_ts < ? "
+            "AND NOT EXISTS (SELECT 1 FROM events WHERE events.incident_id = incidents.id)",
+            (before_ts,),
+        )
+        return int(cursor.rowcount or 0)
+
     def list_events(self, limit: int = 100) -> list[Event]:
         """Return the most recent events, newest first."""
         conn = self._connect()
         with self._lock:
             rows = conn.execute(
-                "SELECT * FROM events ORDER BY ts DESC, rowid DESC LIMIT ?", (limit,)
+                "SELECT e.*, COALESCE(i.count, 1) AS incident_count "
+                "FROM events e LEFT JOIN incidents i ON i.id = e.incident_id "
+                "ORDER BY e.ts DESC, e.rowid DESC LIMIT ?",
+                (limit,),
             ).fetchall()
         return [_row_to_event(row) for row in rows]
 
@@ -206,8 +301,9 @@ class Database:
         the delivery loop advances.
         """
         rows = self.query(
-            "SELECT rowid AS cursor_rowid, * FROM events "
-            "WHERE rowid > ? ORDER BY rowid ASC LIMIT ?",
+            "SELECT e.rowid AS cursor_rowid, e.*, COALESCE(i.count, 1) AS incident_count "
+            "FROM events e LEFT JOIN incidents i ON i.id = e.incident_id "
+            "WHERE e.rowid > ? ORDER BY e.rowid ASC LIMIT ?",
             (rowid, limit),
         )
         return [(int(row["cursor_rowid"]), _row_to_event(row)) for row in rows]
@@ -263,7 +359,12 @@ class Database:
         """Return a single event by id, or ``None`` if it does not exist."""
         conn = self._connect()
         with self._lock:
-            row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            row = conn.execute(
+                "SELECT e.*, COALESCE(i.count, 1) AS incident_count "
+                "FROM events e LEFT JOIN incidents i ON i.id = e.incident_id "
+                "WHERE e.id = ?",
+                (event_id,),
+            ).fetchone()
         return _row_to_event(row) if row is not None else None
 
     def close(self) -> None:
@@ -463,6 +564,7 @@ class Database:
 def _row_to_event(row: sqlite3.Row) -> Event:
     """Rebuild an :class:`Event` from a database row."""
     raw_details: Any = row["details"]
+    columns = row.keys()
     return Event(
         id=row["id"],
         ts=datetime.fromisoformat(row["ts"]),
@@ -477,4 +579,5 @@ def _row_to_event(row: sqlite3.Row) -> Event:
         interface=row["interface"],
         details=json.loads(raw_details),
         incident_id=row["incident_id"],
+        incident_count=int(row["incident_count"]) if "incident_count" in columns else 1,
     )

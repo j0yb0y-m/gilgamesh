@@ -50,6 +50,14 @@
       const span = document.createElement("span");
       span.className = name;
       span.textContent = value; // textContent, never innerHTML: no XSS from the feed.
+      if (name === "feed-row-summary" && Number(event.incident_count) > 1) {
+        // The incident's total sightings, not just this event. Repeated attacks
+        // aggregate into one stored alert, so without this the feed looks quiet.
+        const count = document.createElement("span");
+        count.className = "text-slate-500";
+        count.textContent = ` · seen ${Number(event.incident_count)}×`;
+        span.appendChild(count);
+      }
       link.appendChild(span);
     }
 

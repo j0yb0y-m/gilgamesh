@@ -24,6 +24,7 @@ accepts URL-encoded form bodies only, so the combined work stays cleanly GPL-2.0
 | Jinja2 | 3.1.6 `V` | BSD-3-Clause | https://github.com/pallets/jinja | yes |
 | Scapy | 2.8.0 `V` | **GPL-2.0-only** | https://github.com/secdev/scapy | yes |
 | argon2-cffi | 25.1.0 `V` | MIT | https://github.com/hynek/argon2-cffi | yes |
+| cryptography | 50.0.2 `V` | Apache-2.0 OR BSD-3-Clause (dual) | https://github.com/pyca/cryptography | yes |
 | itsdangerous | (pin at add) `P` | BSD-3-Clause | https://github.com/pallets/itsdangerous | yes |
 | limits | 5.8.0 `V` | MIT | https://github.com/alisaifee/limits | yes |
 | httpx | (pin at add) `P` | BSD-3-Clause | https://github.com/encode/httpx | yes |

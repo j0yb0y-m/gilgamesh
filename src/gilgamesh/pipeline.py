@@ -75,6 +75,9 @@ class PipelineResult:
     incident_id: int | None = None
     count: int = 1
     severity: Severity | None = None
+    #: True when this submission started a new logical incident. The runner uses it to
+    #: insert one database incident row and map the pipeline's local id to it.
+    new_incident: bool = False
 
 
 @dataclass(slots=True)
@@ -87,6 +90,11 @@ class _KeyState:
     incident_id: int | None = None
     incident_count: int = 0
     incident_last_seen: float = 0.0
+    #: Whether the owner has actually been told about this incident. A new incident can
+    #: be suppressed by the cooldown/rate limit/global ceiling; without this flag the
+    #: first alert that finally gets through would be classified as an aggregation and
+    #: never stored.
+    incident_announced: bool = False
     #: Whether this incident has already been re-announced at escalated severity.
     #: Without it, every post-cooldown event re-escalated, so one sustained attack
     #: alerted once per cooldown (every five minutes) instead of once.
@@ -113,25 +121,101 @@ class Pipeline:
         return len(self._keys)
 
     def submit(self, event: Event) -> PipelineResult:
-        """Run ``event`` through the pipeline and return the decision."""
+        """Run ``event`` through the pipeline and return the decision.
+
+        Every non-deduplicated sighting increments its incident's count **before** the
+        cooldown, rate-limit and global-ceiling checks. Those stages decide whether the
+        owner is *told*; they must not erase the evidence that the attack continued.
+        Only an exact repeat inside the dedup window is left uncounted, because it is
+        packet-level noise rather than a new sighting.
+        """
         settings = self._settings
         now = self._clock()
         state = self._state_for(event.dedup_key)
 
         if state.last_seen is not None and now - state.last_seen < settings.dedup_window:
-            return PipelineResult(PipelineDecision.DEDUPED)
+            return PipelineResult(
+                PipelineDecision.DEDUPED,
+                incident_id=state.incident_id,
+                count=state.incident_count or 1,
+            )
         state.last_seen = now
 
+        new_incident = self._track_incident(state, now)
+
         if state.last_alert is not None and now - state.last_alert < settings.cooldown:
-            return PipelineResult(PipelineDecision.COOLDOWNED)
+            return self._suppressed(PipelineDecision.COOLDOWNED, state, event, new_incident)
 
         if not self._within_rate_limit(state, now):
-            return PipelineResult(PipelineDecision.RATE_LIMITED)
+            return self._suppressed(PipelineDecision.RATE_LIMITED, state, event, new_incident)
 
         if not self._within_global_limit(now):
-            return PipelineResult(PipelineDecision.SUPPRESSED)
+            return self._suppressed(PipelineDecision.SUPPRESSED, state, event, new_incident)
 
-        return self._aggregate_or_open(state, event, now)
+        return self._announce(state, event, now, new_incident)
+
+    def _suppressed(
+        self,
+        decision: PipelineDecision,
+        state: _KeyState,
+        event: Event,
+        new_incident: bool,
+    ) -> PipelineResult:
+        """Report a counted sighting whose announcement a limiter suppressed."""
+        return PipelineResult(
+            decision,
+            incident_id=state.incident_id,
+            count=state.incident_count,
+            severity=event.severity,
+            new_incident=new_incident,
+        )
+
+    def _track_incident(self, state: _KeyState, now: float) -> bool:
+        """Open or extend this attack's incident, returning True when it is new."""
+        window = self._settings.aggregate_window
+        if state.incident_id is None or now - state.incident_last_seen >= window:
+            state.incident_id = self._next_incident_id
+            self._next_incident_id += 1
+            state.incident_count = 1
+            state.incident_last_seen = now
+            state.incident_announced = False
+            state.incident_escalated = False
+            return True
+        state.incident_count += 1
+        state.incident_last_seen = now
+        return False
+
+    def _announce(
+        self, state: _KeyState, event: Event, now: float, new_incident: bool
+    ) -> PipelineResult:
+        """Store the first alert of an incident, or its single escalated re-announcement."""
+        escalating = (
+            state.incident_count >= self._settings.escalate_at and not state.incident_escalated
+        )
+        severity = event.severity.escalated() if escalating else event.severity
+
+        if not state.incident_announced or escalating:
+            # ``not announced`` also covers an incident whose first alert was held back
+            # by a limiter: when the limiter frees up, that first alert is still owed.
+            if escalating:
+                state.incident_escalated = True
+            state.incident_announced = True
+            state.last_alert = now
+            return PipelineResult(
+                PipelineDecision.STORE,
+                incident_id=state.incident_id,
+                count=state.incident_count,
+                severity=severity,
+                new_incident=new_incident,
+            )
+
+        return PipelineResult(
+            PipelineDecision.AGGREGATE,
+            incident_id=state.incident_id,
+            count=state.incident_count,
+            severity=event.severity,
+            new_incident=new_incident,
+        )
 
     def _state_for(self, key: str) -> _KeyState:
         """Return the state for ``key``, evicting least-recently-used keys."""
@@ -171,34 +255,3 @@ class Pipeline:
             return False
         self._global.append(now)
         return True
-
-    def _aggregate_or_open(self, state: _KeyState, event: Event, now: float) -> PipelineResult:
-        """Fold the event into an open incident, or open a new one."""
-        window = self._settings.aggregate_window
-        if state.incident_id is not None and now - state.incident_last_seen < window:
-            state.incident_count += 1
-            state.incident_last_seen = now
-            if state.incident_count >= self._settings.escalate_at and not state.incident_escalated:
-                # Sustained attack: re-announce **once**, at a higher severity.
-                state.incident_escalated = True
-                state.last_alert = now
-                return PipelineResult(
-                    PipelineDecision.STORE,
-                    state.incident_id,
-                    state.incident_count,
-                    event.severity.escalated(),
-                )
-            return PipelineResult(
-                PipelineDecision.AGGREGATE,
-                state.incident_id,
-                state.incident_count,
-                event.severity,
-            )
-
-        state.incident_id = self._next_incident_id
-        self._next_incident_id += 1
-        state.incident_count = 1
-        state.incident_last_seen = now
-        state.incident_escalated = False
-        state.last_alert = now
-        return PipelineResult(PipelineDecision.STORE, state.incident_id, 1, event.severity)

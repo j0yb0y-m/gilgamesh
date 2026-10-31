@@ -269,6 +269,8 @@ class Notifier:
         self._queue: asyncio.Queue[Event | _Stop] = asyncio.Queue(maxsize=max_queue)
         self._max_queue = max_queue
         self._worker: asyncio.Task[None] | None = None
+        #: Per-event futures used by :meth:`deliver` to wait for an actual attempt.
+        self._waiters: dict[str, asyncio.Future[list[DeliveryResult]]] = {}
         self.dropped = 0
 
     async def start(self) -> None:
@@ -288,6 +290,22 @@ class Notifier:
     async def enqueue(self, event: Event) -> None:
         """Queue an event for delivery, waiting for room if the queue is not full."""
         await self._queue.put(event)
+
+    async def deliver(self, event: Event) -> list[DeliveryResult]:
+        """Queue one event and wait until every willing channel has attempted it.
+
+        The delivery loop uses this to move its durable cursor only *after* the alert
+        has actually been handed to the channels. Merely enqueueing is not enough: the
+        queue is in memory, so a restart would lose it while the cursor had already
+        moved past the event.
+        """
+        waiter: asyncio.Future[list[DeliveryResult]] = asyncio.get_running_loop().create_future()
+        self._waiters[event.id] = waiter
+        try:
+            await self._queue.put(event)
+            return await waiter
+        finally:
+            self._waiters.pop(event.id, None)
 
     def enqueue_nowait(self, event: Event) -> bool:
         """Queue an event without waiting; drop it if the queue is full."""
@@ -309,15 +327,29 @@ class Notifier:
             try:
                 if isinstance(event, _Stop):
                     return
-                await self._dispatch(event)
+                try:
+                    results = await self._dispatch(event)
+                except Exception as exc:
+                    # A dispatcher bug must not kill the worker; report it to the
+                    # caller waiting in deliver() and carry on with the next event.
+                    logger.exception("notification dispatch failed")
+                    waiter = self._waiters.get(event.id)
+                    if waiter is not None and not waiter.done():
+                        waiter.set_exception(exc)
+                else:
+                    waiter = self._waiters.get(event.id)
+                    if waiter is not None and not waiter.done():
+                        waiter.set_result(results)
             finally:
                 self._queue.task_done()
 
-    async def _dispatch(self, event: Event) -> None:
+    async def _dispatch(self, event: Event) -> list[DeliveryResult]:
+        results: list[DeliveryResult] = []
         for channel in self._channels:
             if not channel.wants(event):
                 continue
             result = await channel.deliver(event)
+            results.append(result)
             if not result.ok:
                 # Surfaced, never raised: a dead channel must not affect detection.
                 logger.warning(
@@ -325,6 +357,7 @@ class Notifier:
                     channel.kind,
                     redact_secrets(result.error or "unknown", channel.config.secrets),
                 )
+        return results
 
 
 __all__ = [

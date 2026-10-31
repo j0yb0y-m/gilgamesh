@@ -245,6 +245,33 @@ is bypassed.
    placement document says so honestly; a power bank / UPS makes this rare and
    mild.
 
+#### The honest failure mode (read this before choosing Mode B)
+
+An inline bridge makes the Pi part of the path: **while it is off, booting, or
+wedged, no frame crosses it.** Gilgamesh cannot honestly promise "never degrades
+the connection" for hardware failure — no software can forward packets without a
+running CPU. What you can do, in order of usefulness:
+
+- **Mirror/SPAN port instead of inline.** If your switch can mirror the
+  router/uplink port to another port, connect the Pi there (one cable, no
+  bridge). The Pi sees a copy of the traffic and **cannot take the household
+  offline**, at the cost of not seeing traffic before the switch and needing a
+  managed switch. This is the safer placement when the hardware supports it.
+- **UPS / power bank.** Keeps the Pi and the bridge alive through short power
+  blips and gives a clean shutdown for longer ones.
+- **Hardware watchdog (installed by `install.sh`).** It reboots the Pi if the
+  kernel or systemd stops responding, turning an indefinite hang into one short
+  reboot. It is armed at the **next boot**, not by the installer itself. Verify:
+
+  ```sh
+  systemctl show --property=RuntimeWatchdogUSec
+  ```
+
+  Expect `RuntimeWatchdogUSec=30s`. If the drop-in must be removed, delete
+  `/etc/systemd/system.conf.d/10-gilgamesh-watchdog.conf` and reboot. The
+  watchdog does **nothing** for a power cut or a dead NIC — that is what the UPS
+  and the mirror-port option are for.
+
 ---
 
 ## 8 · Optional but recommended: two more eyes (Suricata)
@@ -272,8 +299,8 @@ sudo systemctl restart gilgamesh-sensor
 
 That's the whole integration: the sensor listens to Suricata's log file by
 default. To pull fresh signatures at any moment, the web app's **Health →
-Update rules now** button runs `suricata-update` for you; there's also a daily
-timer after install.
+Update rules now** button asks systemd to run `suricata-update` and reload
+Suricata; there's also a daily timer after install.
 
 > Don't want Suricata? Gilgamesh runs happily without it and the built-in
 > detectors don't change. You can add it any time by re-running the two blocks
@@ -331,6 +358,39 @@ dashboard's IP was in step 3 if you have the router's page open.)
 Then go and read the [**usage guide**](USAGE.md). The "First evening checklist"
 section will have your notifications running in about five minutes.
 
+### Optional: put the UI on HTTPS
+
+The Settings page's **HTTPS** control now changes what the web service actually
+serves; it is not just a stored preference. Pick one:
+
+- **Self-signed (recommended inside a home).** Settings → HTTPS → *Self-signed
+  certificate* → Save, then restart the web service:
+
+  ```sh
+  sudo systemctl restart gilgamesh-web
+  ```
+
+  Gilgamesh writes `cert.pem` / `key.pem` under `/var/lib/gilgamesh/tls/`, adds
+  the Pi's hostname and addresses to the certificate, and reuses it until it is
+  close to expiry. Browsers warn because no public CA signed it; the traffic is
+  still encrypted, including the admin password and session cookie.
+- **Your own certificate.** Put the pair somewhere only the `gilgamesh` user can
+  read (for example `/etc/gilgamesh/tls/`), set both paths in
+  `/etc/gilgamesh/gilgamesh.env`, choose *Certificate supplied by me*, and
+  restart the service:
+
+  ```sh
+  GILGAMESH_TLS_CERTFILE=/etc/gilgamesh/tls/cert.pem
+  GILGAMESH_TLS_KEYFILE=/etc/gilgamesh/tls/key.pem
+  ```
+
+  If either file is missing or unreadable, the service **refuses to start** and
+  says why in the journal; it never silently falls back to plain HTTP.
+
+Either way, open `https://<the-pi's-IP>:8080` afterwards. A restart is always
+required: TLS is configured before the listener opens, so the running process
+cannot switch scheme underneath an open browser tab.
+
 ---
 
 ## Troubleshooting
@@ -338,7 +398,9 @@ section will have your notifications running in about five minutes.
 | Symptom | Likely cause / fix |
 |---|---|
 | `systemctl status gilgamesh-sensor` says **inactive (dead)** and the log complains the interface is wrong | you may be in Mode A on `br0` (the default interface) or vice versa; set `GILGAMESH_INTERFACE` in `/etc/gilgamesh/gilgamesh.env` to `eth0`, `br0`, or whatever `ip -br link` shows, then `sudo systemctl restart gilgamesh-sensor` |
-| The Pi's web page **refuses to connect from another device** | confirm `systemctl status gilgamesh-web` is active and that you are using `http://` and the *Pi's own* IP (not another machine's), then confirm both machines are on the same network — some routers isolate "guest" Wi-Fi |
+| The Pi's web page **refuses to connect from another device** | confirm `systemctl status gilgamesh-web` is active and that you are using the right scheme — `http://` by default, `https://` if you enabled HTTPS — and the *Pi's own* IP (not another machine's), then confirm both machines are on the same network — some routers isolate "guest" Wi-Fi |
+| **HTTPS was enabled but the page does not load** | use `https://`, not `http://`; a self-signed certificate shows a browser warning (accept it once). If the service will not start, `journalctl -u gilgamesh-web -n 50` names the missing certificate/key path |
+| **The Update rules button reports an error** | the button starts `gilgamesh-rules-update.service` through polkit; confirm the unit is installed and `systemctl status gilgamesh-rules-update` runs cleanly. Without polkit/systemd the button reports the error instead of pretending it worked |
 | A scanner says the port is open but the browser times out | your router has a "AP/client isolation" feature on Wi-Fi — try from a device on the wired LAN |
 | You forgot the setup token | `sudo journalctl -u gilgamesh-rules-update` won't help for that; the token was printed by `gilgamesh-web` at its very first start: `sudo journalctl -u gilgamesh-web | grep -i setup` |
 | GitHub repo is private | see the two clone options in **step 5** |

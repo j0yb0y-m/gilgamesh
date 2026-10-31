@@ -29,7 +29,7 @@ from gilgamesh.devices import DeviceStore
 from gilgamesh.notifiers.base import ChannelKind, Transport
 from gilgamesh.preferences import PreferencesStore
 from gilgamesh.rules import RuleConfigService, default_catalogue
-from gilgamesh.rules_update import RulesUpdateResult, refresh_rules
+from gilgamesh.rules_update import RulesUpdateResult, trigger_rules_update_service
 from gilgamesh.web.auth import create_auth_service
 from gilgamesh.web.delivery import DeliveryService
 from gilgamesh.web.deps import STATIC_DIR, Redirect
@@ -113,10 +113,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
         ]
 
-        def update_rules() -> RulesUpdateResult:
-            return refresh_rules(settings=resolved)
-
-        app.state.rules_update = update_rules
+        # The web unit cannot write Suricata's rule directories (by design), so the
+        # button starts the hardened oneshot unit through its narrow polkit rule.
+        app.state.rules_update = trigger_rules_update_service
         try:
             yield
         finally:

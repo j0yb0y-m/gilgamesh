@@ -76,7 +76,9 @@
           <option value="provided" {% if prefs.https_mode == "provided" %}selected{% endif %}>Certificate supplied by me</option>
         </select>
         <span class="field-hint">
-          Recorded as intent; certificates and TLS termination are configured on the Pi.
+          Applied when the web service restarts. Self-signed writes a certificate under
+          the state directory; provided reads GILGAMESH_TLS_CERTFILE and
+          GILGAMESH_TLS_KEYFILE from the deploy environment.
         </span>
       </div>
 

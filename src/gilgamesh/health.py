@@ -55,13 +55,24 @@ class HealthReport(BaseModel):
     #: Filled by the route from the database and the rule files, not from ``/proc``.
     last_event_ts: datetime | None = None
     rule_version: str | None = None
+    #: Packets the live capture queue had to drop since the sensor started. Non-zero
+    #: means the box is overloaded and detections are being missed, not merely delayed.
+    sensor_packets_dropped: int = 0
 
     def with_context(
-        self, *, last_event_ts: datetime | None, rule_version: str | None
+        self,
+        *,
+        last_event_ts: datetime | None,
+        rule_version: str | None,
+        sensor_packets_dropped: int = 0,
     ) -> HealthReport:
         """Attach the sensor/rule facts the route looked up, leaving this report intact."""
         return self.model_copy(
-            update={"last_event_ts": last_event_ts, "rule_version": rule_version}
+            update={
+                "last_event_ts": last_event_ts,
+                "rule_version": rule_version,
+                "sensor_packets_dropped": sensor_packets_dropped,
+            }
         )
 
 

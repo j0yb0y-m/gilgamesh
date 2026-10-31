@@ -59,8 +59,9 @@ Everything they raise is deduplicated, rate-limited and aggregated first:
 one outage storm never becomes ten thousand phone calls, so the alerts stay
 trustworthy.
 
-The full design (architecture, threat model, resource budget, milestone log with
-test evidence) lives in [`docs/PLAN.md`](docs/PLAN.md) for the curious.
+The design (process split, data flow, storage, deployment modes) is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The milestone log with test
+evidence lives in [`docs/PLAN.md`](docs/PLAN.md) for the curious.
 
 ## The guides
 
@@ -68,6 +69,7 @@ test evidence) lives in [`docs/PLAN.md`](docs/PLAN.md) for the curious.
 |---|---|
 | **[docs/INSTALL.md](docs/INSTALL.md)** | you want it running — from an SD card to a live dashboard, step by step |
 | **[docs/USAGE.md](docs/USAGE.md)** | you have an alert and no idea what it means, or just want the full page tour |
+| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | you want to know how the two processes, the pipeline, and the database fit together |
 | **[docs/DEMO.md](docs/DEMO.md)** | you want to show it to someone without touching your real network |
 
 ## For developers / contributors

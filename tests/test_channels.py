@@ -94,6 +94,48 @@ def test_invalid_quiet_hours_are_refused(store: ChannelStore) -> None:
         store.save(ChannelKind.DISCORD, fields={}, quiet_start="22:00", quiet_end="7am")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://discord.com/api/webhooks/1/abc",  # not encrypted
+        "https://discord.com.evil.example/api/webhooks/1/abc",  # lookalike host
+        "https://evil.example/api/webhooks/1/abc",  # arbitrary host
+        "https://discord.com@evil.example/api/webhooks/1/abc",  # userinfo trick
+        "https://discord.com:8443/api/webhooks/1/abc",  # unexpected port
+        "https://discord.com:not-a-port/api/webhooks/1/abc",  # unparseable port
+        "https://discord.com/api/webhooks/1",  # no token
+        "https://discord.com/api/webhooks/1/abc/extra",  # extra path
+        "https://discord.com/api/webhooks/not-a-snowflake/abc",
+        "https://discord.com/api/webhooks/1/abc?wait=true",
+        "https://discord.com/api/webhooks/1/abc#fragment",
+        "not a url",
+    ],
+)
+def test_discord_webhook_url_must_be_a_real_discord_endpoint(store: ChannelStore, url: str) -> None:
+    """A webhook is a secret-bearing URL the Pi will POST to, so pin scheme and host."""
+    with pytest.raises(ChannelConfigError, match=r"discord\.com/api/webhooks"):
+        store.save(ChannelKind.DISCORD, fields={"webhook_url": url})
+
+
+def test_discord_webhook_error_never_echoes_the_secret(store: ChannelStore) -> None:
+    token = "SUPERSECRET-token-value"
+    with pytest.raises(ChannelConfigError) as excinfo:
+        store.save(
+            ChannelKind.DISCORD,
+            fields={"webhook_url": f"https://evil.example/api/webhooks/1/{token}"},
+        )
+
+    assert token not in str(excinfo.value)
+    assert store.get(ChannelKind.DISCORD) is None
+
+
+def test_discord_webhook_accepts_the_documented_shape(store: ChannelStore) -> None:
+    url = "https://discord.com/api/webhooks/123456789012345678/AbC_d-ef.123"
+    record = store.save(ChannelKind.DISCORD, fields={"webhook_url": url})
+
+    assert record.config["webhook_url"] == url
+
+
 def test_invalid_smtp_port_is_refused(store: ChannelStore) -> None:
     with pytest.raises(ChannelConfigError):
         store.save(ChannelKind.EMAIL, fields={"smtp_host": "h", "smtp_port": "not-a-port"})
@@ -121,7 +163,14 @@ def test_recipients_are_split_and_trimmed(store: ChannelStore) -> None:
 def test_build_notification_channel_matches_kind(
     kind: ChannelKind, expected: type, store: ChannelStore
 ) -> None:
-    record = store.save(kind, fields={"webhook_url": "u", "bot_token": "t", "chat_id": "c"})
+    record = store.save(
+        kind,
+        fields={
+            "webhook_url": "https://discord.com/api/webhooks/1/tok",
+            "bot_token": "t",
+            "chat_id": "c",
+        },
+    )
 
     channel = store.build_channel(record)
 
@@ -140,19 +189,26 @@ def test_delete_removes_the_channel(store: ChannelStore) -> None:
 def test_channels_survive_reopening_the_database(tmp_path: Path) -> None:
     database = Database(tmp_path / "gilgamesh.db")
     database.initialize()
-    ChannelStore(database).save(ChannelKind.DISCORD, fields={"webhook_url": "keep-me"})
+    ChannelStore(database).save(
+        ChannelKind.DISCORD,
+        fields={"webhook_url": "https://discord.com/api/webhooks/1/keep-me"},
+    )
     database.close()
 
     reopened = Database(tmp_path / "gilgamesh.db")
     reopened.initialize()
     record = ChannelStore(reopened).get(ChannelKind.DISCORD)
-    assert record is not None and record.config["webhook_url"] == "keep-me"
+    assert record is not None
+    assert record.config["webhook_url"] == "https://discord.com/api/webhooks/1/keep-me"
     reopened.close()
 
 
 def test_stored_config_is_scoped_to_the_kind(store: ChannelStore) -> None:
     """A Discord row must not retain stale SMTP fields from an earlier shape."""
-    record = store.save(ChannelKind.DISCORD, fields={"webhook_url": "u"})
+    record = store.save(
+        ChannelKind.DISCORD,
+        fields={"webhook_url": "https://discord.com/api/webhooks/1/u"},
+    )
 
     assert set(record.config) == {"webhook_url"}
 

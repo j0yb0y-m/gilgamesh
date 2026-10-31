@@ -41,10 +41,11 @@ def alert_line(
     src_ip: str = "10.0.0.2",
     dest_ip: str = "93.184.216.34",
     event_type: str = "alert",
+    timestamp: str = "2026-10-14T09:00:00.123456+0000",
 ) -> str:
     """Build one realistic EVE JSON line, using Suricata's real field names."""
     record: dict[str, object] = {
-        "timestamp": "2026-10-14T09:00:00.123456+0000",
+        "timestamp": timestamp,
         "flow_id": 1234567890,
         "event_type": event_type,
         "src_ip": src_ip,
@@ -78,6 +79,14 @@ def test_alert_record_becomes_an_event() -> None:
     assert event.details["category"] == "Potentially Bad Traffic"
     assert event.details["rev"] == 4
     assert event.details["action"] == "allowed"
+
+
+def test_event_uses_suricata_s_own_timestamp() -> None:
+    """A replayed alert must keep its real time, not the moment the tailer read it."""
+    event = parse_eve_line(alert_line(timestamp="2026-09-01T22:31:07.654321+0000"))
+
+    assert event is not None
+    assert event.ts.isoformat() == "2026-09-01T22:31:07.654321+00:00"
 
 
 def test_suricata_uses_dest_not_dst_for_the_destination() -> None:
@@ -317,26 +326,74 @@ def test_follow_waits_for_a_log_that_appears_later(
 def test_follow_yields_lines_appended_to_an_existing_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """On first open the tailer starts at the end: history is not replayed as new."""
     from gilgamesh.sensors import suricata_ingest
 
     monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
     path = tmp_path / "eve.json"
-    path.write_text(alert_line(signature="first") + "\n")
+    path.write_text(alert_line(signature="history") + "\n")
     stop = threading.Event()
     seen: list[Event] = []
     thread = threading.Thread(target=_collect, args=(EveIngestor(), path, stop, seen))
     thread.start()
     try:
-        deadline = time.monotonic() + 5.0
-        while len(seen) < 1 and time.monotonic() < deadline:
-            time.sleep(0.02)
+        time.sleep(0.1)  # let the tailer open the existing file
         with path.open("a", encoding="utf-8") as handle:
             handle.write(alert_line(signature="second") + "\n")
         deadline = time.monotonic() + 5.0
-        while len(seen) < 2 and time.monotonic() < deadline:
+        while len(seen) < 1 and time.monotonic() < deadline:
             time.sleep(0.02)
     finally:
         stop.set()
         thread.join(timeout=5.0)
 
-    assert [event.details["signature"] for event in seen] == ["first", "second"]
+    assert [event.details["signature"] for event in seen] == ["second"]
+
+
+def test_follow_resumes_at_the_persisted_offset_after_a_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash must replay at worst one line, never the entire historical log."""
+    from gilgamesh.db import Database
+    from gilgamesh.sensors import suricata_ingest
+
+    monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
+    path = tmp_path / "eve.json"
+    path.write_text("")
+    db = Database(tmp_path / "gilgamesh.db")
+    db.initialize()
+    stop = threading.Event()
+    seen: list[Event] = []
+    thread = threading.Thread(target=_collect, args=(EveIngestor(database=db), path, stop, seen))
+    thread.start()
+    try:
+        time.sleep(0.1)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(alert_line(signature="first") + "\n")
+        deadline = time.monotonic() + 5.0
+        while len(seen) < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(alert_line(signature="after restart") + "\n")
+
+    second_seen: list[Event] = []
+    second_stop = threading.Event()
+    second_thread = threading.Thread(
+        target=_collect, args=(EveIngestor(database=db), path, second_stop, second_seen)
+    )
+    second_thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while not second_seen and time.monotonic() < deadline:
+            time.sleep(0.02)
+    finally:
+        second_stop.set()
+        second_thread.join(timeout=5.0)
+
+    assert [event.details["signature"] for event in seen] == ["first"]
+    assert [event.details["signature"] for event in second_seen] == ["after restart"]
+    db.close()

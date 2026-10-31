@@ -11,6 +11,7 @@ These tests ran red until the modules existed; they now guard the behaviour.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import cast
 
@@ -73,6 +74,24 @@ def test_event_roundtrips_through_database(tmp_path: Path) -> None:
     assert events[0].detector == "pipette"
 
     assert db.get_event(event.id) == events[0]
+    db.close()
+
+
+def test_upgrading_a_version_2_database_adds_the_incidents_table(tmp_path: Path) -> None:
+    """An installed appliance must gain incident counts without recreating its database."""
+    path = tmp_path / "gilgamesh.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        "CREATE TABLE schema_version (version INTEGER NOT NULL);"
+        "INSERT INTO schema_version (version) VALUES (2);"
+    )
+    legacy.close()
+
+    db = Database(path)
+    db.initialize()
+
+    assert db.query("SELECT version FROM schema_version")[0]["version"] == 3
+    assert db.query("SELECT COUNT(*) AS n FROM incidents")[0]["n"] == 0
     db.close()
 
 

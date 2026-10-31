@@ -57,7 +57,9 @@
           <a href="/alerts/{{ event.id }}">
             <span class="badge badge-{{ event.severity }}">{{ event.severity }}</span>
             <span class="feed-row-type">{{ event.type }}</span>
-            <span class="feed-row-summary">{{ event.summary }}</span>
+            <span class="feed-row-summary">
+              {{ event.summary }}{% if event.incident_count > 1 %}<span class="text-slate-500"> · seen {{ event.incident_count }}×</span>{% endif %}
+            </span>
             <time class="feed-row-time" datetime="{{ event.ts.isoformat() }}">
               {{ event.ts.isoformat(timespec="seconds") }}
             </time>

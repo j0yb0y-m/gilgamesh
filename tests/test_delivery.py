@@ -173,6 +173,56 @@ def test_a_channel_below_its_minimum_severity_is_not_messaged(db: Database) -> N
     assert transport.requests == []
 
 
+class BlockingTransport(FakeTransport):
+    """A channel that starts sending and then waits until the test releases it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, request: object) -> DeliveryResult:
+        self.started.set()
+        await self.release.wait()
+        return await super().__call__(request)
+
+
+def test_cursor_waits_for_the_notification_attempt(db: Database) -> None:
+    """A crash after enqueueing must not lose the alert the queue still holds."""
+    channels = ChannelStore(db)
+    channels.save(
+        ChannelKind.DISCORD,
+        fields={"webhook_url": DISCORD_URL},
+        min_severity=Severity.MEDIUM,
+    )
+    transport = BlockingTransport()
+    published: list[Event] = []
+
+    async def publish(event: Event) -> None:
+        published.append(event)
+
+    service = DeliveryService(db, channels, publish, transports={ChannelKind.DISCORD: transport})
+
+    async def scenario() -> None:
+        await service.poll_once()  # establish the starting cursor
+        stored = db.insert_event(make_event("must not be skipped"))
+        rowid = db.max_event_rowid()
+        task = asyncio.create_task(service.poll_once())
+
+        await asyncio.wait_for(transport.started.wait(), timeout=2.0)
+        assert published and published[0].id == stored.id  # the feed is already updated
+        assert service.cursor != rowid
+        assert db.get_setting(CURSOR_KEY) != str(rowid)
+
+        transport.release.set()
+        assert await asyncio.wait_for(task, timeout=2.0) == 1
+        assert service.cursor == rowid
+        assert db.get_setting(CURSOR_KEY) == str(rowid)
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
 def test_run_stops_when_the_stop_event_is_set(db: Database) -> None:
     published: list[Event] = []
     service = make_service(db, published)
@@ -225,6 +275,23 @@ def test_retention_never_deletes_an_undelivered_event(db: Database) -> None:
 
     assert removed["events"] == 0
     assert len(db.list_events()) == 1
+
+
+def test_retention_keeps_an_incident_whose_event_is_undelivered(db: Database) -> None:
+    """The incident carries the count; deleting it would reset the alert's history."""
+    now = datetime.now(UTC).timestamp()
+    old = datetime.fromtimestamp(now - 10 * 86_400.0, UTC)
+    event = make_event("old but undelivered", ts=old)
+    incident_id = db.create_incident(event)
+    db.insert_event(event.model_copy(update={"incident_id": incident_id}))
+    preferences = PreferencesStore(db)
+    preferences.update(retention_days=1)
+
+    task = MaintenanceTask(db, preferences, clock=lambda: now)
+    removed = task.run_once(delivered_rowid=0)
+
+    assert removed["incidents"] == 0
+    assert db.get_incident(incident_id) is not None
 
 
 def test_maintenance_prunes_stale_login_attempts(db: Database) -> None:

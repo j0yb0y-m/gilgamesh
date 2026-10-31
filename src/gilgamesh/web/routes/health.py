@@ -58,6 +58,7 @@ def _health_page(
     report = report.with_context(
         last_event_ts=_last_event_ts(request.app.state.db),
         rule_version=read_rules_version(settings),
+        sensor_packets_dropped=_sensor_packets_dropped(request.app.state.db),
     )
     return templates.TemplateResponse(
         request=request,
@@ -82,6 +83,15 @@ def _last_event_ts(database: Database) -> datetime | None:
         return None
 
 
+def _sensor_packets_dropped(database: Database) -> int:
+    """Capture drops reported by the sensor, or 0 before it has published any."""
+    raw = database.get_setting("sensor_packets_dropped")
+    try:
+        return int(raw) if raw is not None else 0
+    except ValueError:
+        return 0
+
+
 def _report_for_template(report: HealthReport) -> dict[str, object]:
     """Flatten the report into values the template can print without formatting logic."""
     return {
@@ -98,4 +108,5 @@ def _report_for_template(report: HealthReport) -> dict[str, object]:
         "interfaces": report.interfaces,
         "last_event_ts": report.last_event_ts,
         "rule_version": report.rule_version,
+        "sensor_packets_dropped": report.sensor_packets_dropped,
     }

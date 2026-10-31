@@ -187,7 +187,7 @@ The forwarding decision is made by the **kernel bridge datapath** (`br0`), not b
 ### 4.2 What does NOT work: power loss / kernel failure = outage
 
 - With two **ordinary** NICs (onboard + a normal USB adapter) there is **no hardware bypass**. If the Pi loses power, hibernates, kernel-panics, or `br0` is deleted, **no traffic passes** — the home network is cut off until the Pi is back and the bridge is up. **Software cannot fix this**, because the forwarding engine itself is gone.
-- A **watchdog** (systemd `WatchdogSec=`, or the hardware watchdog) restarts a *hung process/service*. It does **nothing** for a power failure, a dead kernel, or a dead NIC — by definition it cannot forward packets without the CPU running.
+- A **watchdog** (systemd `WatchdogSec=` for a service, or the hardware watchdog via `RuntimeWatchdogSec=`) can restart a hung process or **reboot a stalled kernel**. It does **not** keep traffic flowing during the reboot, and it does **nothing** for a power failure or a dead NIC — by definition it cannot forward packets without the CPU running.
 
 ### 4.3 Real mitigations (ranked, honest about trade-offs)
 

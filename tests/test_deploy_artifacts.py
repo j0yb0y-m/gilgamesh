@@ -147,6 +147,40 @@ def test_rules_update_unit_can_write_its_stamp_and_suricata_rules() -> None:
     assert "/var/lib/suricata" in text
 
 
+def test_polkit_rule_grants_only_the_rules_update_unit() -> None:
+    """The web tier gets one verb on one unit, not general systemctl access."""
+    text = read(DEPLOY / "polkit" / "50-gilgamesh.rules")
+
+    assert '"org.freedesktop.systemd1.manage-units"' in text
+    assert '"gilgamesh-rules-update.service"' in text
+    assert '"start"' in text
+    assert 'subject.user === "gilgamesh"' in text
+    assert "polkit.Result.YES" in text
+
+
+def test_installer_installs_the_polkit_rule() -> None:
+    text = read(REPO_ROOT / "install.sh")
+
+    assert "deploy/polkit/50-gilgamesh.rules" in text
+    assert "/etc/polkit-1/rules.d/50-gilgamesh.rules" in text
+
+
+def test_watchdog_drop_in_bounds_a_hang_without_claiming_to_fix_power_loss() -> None:
+    """An inline bridge is a single point of failure; the watchdog shrinks, not removes it."""
+    text = read(DEPLOY / "systemd" / "system.conf.d" / "10-gilgamesh-watchdog.conf")
+
+    assert "[Manager]" in text
+    assert "RuntimeWatchdogSec=30s" in text
+    assert "RebootWatchdogSec=" in text
+
+
+def test_installer_installs_the_watchdog_drop_in() -> None:
+    text = read(REPO_ROOT / "install.sh")
+
+    assert "deploy/systemd/system.conf.d/10-gilgamesh-watchdog.conf" in text
+    assert "/etc/systemd/system.conf.d/10-gilgamesh-watchdog.conf" in text
+
+
 def test_timer_runs_daily_and_is_persistent() -> None:
     text = unit("gilgamesh-rules-update.timer")
 
@@ -167,6 +201,8 @@ def test_environment_example_names_every_process_setting() -> None:
     assert "GILGAMESH_DATA_DIR=/var/lib/gilgamesh" in text
     assert "GILGAMESH_INTERFACE=br0" in text
     assert "GILGAMESH_SURICATA_EVE_PATH=/var/log/suricata/eve.json" in text
+    assert "GILGAMESH_TLS_CERTFILE=" in text
+    assert "GILGAMESH_TLS_KEYFILE=" in text
 
 
 def test_journald_caps_bound_the_log() -> None:

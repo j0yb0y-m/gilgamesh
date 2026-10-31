@@ -93,6 +93,12 @@
         last alert:
         {% if report.last_event_ts %}{{ report.last_event_ts.isoformat(timespec="seconds") }}{% else %}none recorded{% endif %}
       </p>
+      <p class="tile-caption {% if report.sensor_packets_dropped %}text-amber-700{% endif %}">
+        capture drops:
+        {% if report.sensor_packets_dropped %}
+          <strong>{{ report.sensor_packets_dropped }}</strong> (box overloaded — alerts may be missed)
+        {% else %}0{% endif %}
+      </p>
     </div>
   </div>
 

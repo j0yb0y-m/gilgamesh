@@ -9,10 +9,11 @@ the in-process :class:`EventBus` (server-sent events for every open browser tab)
 hands it to the :class:`Notifier` fan-out.
 
 **The delivery position is durable.** The last delivered ``rowid`` is written to
-``app_settings``, so an event that arrives while the web process is restarting is
-delivered once the process is back, instead of being silently skipped. Delivery is
-therefore *at least once*: a crash between "published" and "cursor persisted" can
-repeat one batch, which is the safe direction for an alerting system.
+``app_settings`` *after* the event has been published and the channels have attempted
+it, so an event that arrives while the web process is restarting is delivered once the
+process is back instead of being silently skipped. Delivery is therefore *at least
+once*: a crash between "attempted" and "cursor persisted" can repeat one event, which
+is the safe direction for an alerting system.
 
 **Why polling.** The two processes share a file and nothing else; SQLite has no
 cross-process notification channel. A two-second poll of an indexed ``rowid`` range
@@ -121,10 +122,15 @@ class DeliveryService:
             for rowid, event in rows:
                 await self._publish(event)
                 if self._notifier is not None:
-                    self._notifier.enqueue_nowait(event)
+                    # Wait for the channel attempts before advancing the durable
+                    # cursor. The notifier queue is in memory: moving the cursor at
+                    # enqueue time would lose the alert on a restart.
+                    await self._notifier.deliver(event)
                 self._cursor = rowid
+                # Persist per event, not per batch: a crash replays at most the one
+                # event that was in flight (at-least-once), never a whole batch.
+                self._db.set_setting(CURSOR_KEY, str(self._cursor))
                 processed += 1
-            self._db.set_setting(CURSOR_KEY, str(self._cursor))
 
     async def run(self, stop: asyncio.Event) -> None:
         """Poll until ``stop`` is set."""

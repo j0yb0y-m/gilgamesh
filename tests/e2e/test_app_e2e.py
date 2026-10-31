@@ -215,7 +215,9 @@ def test_saving_a_webhook_configures_the_card_and_never_echoes_the_secret(
     page.goto(f"{app_url}/notifications")
 
     card = page.locator("#channel-discord")
-    card.get_by_label("Webhook URL").fill("http://127.0.0.1:9/hooks/e2e-fake")
+    card.get_by_label("Webhook URL").fill(
+        "https://discord.com/api/webhooks/123456789/e2e-fake-token"
+    )
     card.get_by_role("button", name="Save").click()
 
     expect(page.get_by_role("status")).to_contain_text("discord saved.")

@@ -16,9 +16,11 @@ from pathlib import Path
 from gilgamesh.config import Settings
 from gilgamesh.rules_update import (
     DEFAULT_TIMEOUT_SECONDS,
+    RULES_UPDATE_UNIT,
     default_runner,
     read_rules_version,
     refresh_rules,
+    trigger_rules_update_service,
 )
 
 
@@ -124,3 +126,42 @@ def test_the_default_runner_reports_a_nonzero_exit_instead_of_raising(
 
     assert result.returncode == 3
     assert DEFAULT_TIMEOUT_SECONDS > 0
+
+
+def test_the_web_trigger_starts_exactly_one_systemd_unit() -> None:
+    """The web sandbox lacks Suricata's writable directories, so it only asks systemd."""
+    runner = FakeRunner()
+
+    result = trigger_rules_update_service(runner=runner)
+
+    assert result.ok is True
+    assert runner.commands == [["systemctl", "start", "--wait", "gilgamesh-rules-update.service"]]
+    assert result.steps == ("rules update service completed",)
+
+
+def test_the_triggered_unit_is_the_one_shipped_in_deploy() -> None:
+    unit = Path(__file__).resolve().parents[1] / "deploy" / "systemd" / RULES_UPDATE_UNIT
+    assert unit.is_file()
+
+
+def test_the_web_trigger_reports_a_failed_unit_without_raising() -> None:
+    failure = subprocess.CompletedProcess(
+        ["systemctl"], 1, stdout="", stderr="Job for gilgamesh-rules-update.service failed"
+    )
+
+    result = trigger_rules_update_service(runner=lambda _command: failure)
+
+    assert result.ok is False
+    assert result.error is not None
+    assert "failed" in result.error
+    assert "suricata-update" not in result.error  # no raw command output leaks through
+
+
+def test_the_web_trigger_reports_a_missing_systemctl_without_raising() -> None:
+    def missing(_command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("systemctl")
+
+    result = trigger_rules_update_service(runner=missing)
+
+    assert result.ok is False
+    assert result.error is not None and "systemctl" in result.error

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from gilgamesh.web.auth import AuthService, PasswordPolicyError, Session
@@ -93,7 +94,11 @@ async def login_submit(
     auth: AuthService = request.app.state.auth
     form = await read_form(request)
     client = request.client.host if request.client else None
-    new_session = auth.login(form.get("username", "").strip(), form.get("password", ""), client)
+    # Argon2 and the global slowdown both block; keeping them on a worker thread means
+    # an attack cannot freeze the dashboard's event loop while it guesses.
+    new_session = await run_in_threadpool(
+        auth.login, form.get("username", "").strip(), form.get("password", ""), client
+    )
     if new_session is None:
         return templates.TemplateResponse(
             request=request,

@@ -7,8 +7,8 @@
 #   2. copies the application to the install prefix and builds its virtualenv with uv
 #   3. writes /etc/gilgamesh/gilgamesh.env — only when it does not exist yet, so local
 #      edits survive an upgrade
-#   4. installs the systemd units, the journald caps and (if Suricata is present) the
-#      Suricata drop-in
+#   4. installs the systemd units, the hardware-watchdog drop-in, the journald caps
+#      and (if Suricata is present) the Suricata drop-in
 #   5. enables the units and (re)starts the web UI and the sensor
 #
 # It is idempotent and non-interactive: re-running it *is* the upgrade path. It does not
@@ -149,11 +149,27 @@ for unit in "$SRC_DIR"/deploy/systemd/*.service "$SRC_DIR"/deploy/systemd/*.time
 	chmod 0644 "/etc/systemd/system/$(basename -- "$unit")"
 done
 
+# The Health page's "Update rules" button asks systemd to start the rules-update
+# oneshot (the web unit is sandboxed without Suricata's writable directories). The
+# polkit rule is the narrow grant that makes that possible: one verb, one unit.
+log "installing the polkit rule for the rules-update button"
+install -D -m 0644 "$SRC_DIR/deploy/polkit/50-gilgamesh.rules" \
+	/etc/polkit-1/rules.d/50-gilgamesh.rules
+
 journald_conf=/etc/systemd/journald.conf.d/10-gilgamesh.conf
 journald_changed=0
 if ! cmp -s "$SRC_DIR/deploy/journald/10-gilgamesh.conf" "$journald_conf"; then
 	install -D -m 0644 "$SRC_DIR/deploy/journald/10-gilgamesh.conf" "$journald_conf"
 	journald_changed=1
+fi
+
+# The inline bridge is a single point of failure. The hardware watchdog bounds a hang
+# to one reboot; it is read at boot, so the owner is told a reboot arms it.
+watchdog_conf=/etc/systemd/system.conf.d/10-gilgamesh-watchdog.conf
+if ! cmp -s "$SRC_DIR/deploy/systemd/system.conf.d/10-gilgamesh-watchdog.conf" "$watchdog_conf"; then
+	log "installing the hardware-watchdog drop-in (armed at next boot)"
+	install -D -m 0644 "$SRC_DIR/deploy/systemd/system.conf.d/10-gilgamesh-watchdog.conf" \
+		"$watchdog_conf"
 fi
 
 if systemctl list-unit-files --no-legend suricata.service 2>/dev/null | grep -q '^suricata\.service'; then

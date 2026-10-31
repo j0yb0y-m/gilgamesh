@@ -1047,6 +1047,88 @@ through the real UI. App pages produced no console errors or warnings.
 console (app on :8461): Total messages: 0 (Errors: 0, Warnings: 0)
 ```
 
+## Phase 10 — Audit fixes from `report.md` (2026-11-01)
+
+The audit report's four confirmed bugs and the likely Pi problems were validated
+against the code and fixed. Every fix has a regression test; no host network
+configuration, attack tool, or `sudo` was used. Changes are uncommitted.
+
+### What changed
+
+- **Live TCP detection** — `DEFAULT_BPF` now includes
+  `tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0`; `SensorRunnerConfig.bpf`
+  reaches `make_source`; `LiveSource` uses a bounded queue
+  (`DEFAULT_MAX_QUEUE = 10_000`) and counts drops. The sensor publishes
+  processed/dropped counters, and Health shows an amber **capture drops** line
+  when the box is overloaded.
+- **Suricata restarts** — the EVE tailer starts at end-of-file on first open,
+  uses the record's own `timestamp`, persists inode/offset after each delivered
+  alert, and opens rotated/new files at byte zero. A pre-existing month-old alert
+  is no longer re-announced as new.
+- **Incident counts** — schema v3 adds `incidents` with `AUTOINCREMENT` ids.
+  The runner creates/updates one row per logical attack and stamps stored events;
+  repeats suppressed by cooldown, per-key rate limit, or global limit are still
+  counted. Alerts list/detail/feed show `seen N times` / `· seen N×`.
+- **HTTPS** — `web/tls.py` implements the three Settings modes with real Uvicorn
+  `ssl_certfile`/`ssl_keyfile`. Self-signed generates `cert.pem`/`key.pem` under
+  `/var/lib/gilgamesh/tls/` (key `0600`, dir `0700`) and reuses a usable pair;
+  provided mode reads `GILGAMESH_TLS_CERTFILE` / `GILGAMESH_TLS_KEYFILE` and
+  refuses to start rather than silently serving HTTP. `cryptography==50.0.2`
+  (Apache-2.0 OR BSD-3-Clause) was recorded in `docs/research/12-licenses.md`
+  before adding it.
+- **Rules update button** — no longer runs `suricata-update` inside the web
+  sandbox. It calls `systemctl start --wait gilgamesh-rules-update.service`;
+  `deploy/polkit/50-gilgamesh.rules` grants only that unit/verb/user, and
+  `install.sh` installs it.
+- **Notification durability** — `Notifier.deliver()` waits for every willing
+  channel's attempt; the delivery cursor is persisted per event only afterwards.
+  A restart now replays an undelivered alert instead of skipping it.
+- **Discord webhook allowlist** — only
+  `https://discord.com/api/webhooks/<numeric id>/<token>` is accepted; scheme,
+  host, port, credentials, query, fragment and path are pinned. Errors never echo
+  the token.
+- **Global login slowdown** — per-client lockout is unchanged. A global counter
+  adds a growing delay once failures across many addresses accumulate; it never
+  refuses a correct login, so it cannot become an owner-lockout DoS. The login
+  route now runs the blocking Argon2/delay work in a worker thread.
+- **Lockout clock base (found while auditing the throttling code)** —
+  `LockoutPolicy` counts on `time.monotonic`, but `AuthService._fail` passed it
+  wall-clock `time.time()`. Every lockout therefore outlived its window until the
+  process restarted. `_fail` now calls `record_failure(lock_key)` and lets the
+  policy read its own clock; only the persisted attempt uses wall time. The
+  regression test was run red against the old line (`assert True is False`) and
+  green after the fix.
+- **Inline bridge honesty** — `docs/INSTALL.md` documents the single-point
+  failure, the SPAN/mirror alternative, UPS, and the watchdog's limits;
+  `deploy/systemd/system.conf.d/10-gilgamesh-watchdog.conf` sets
+  `RuntimeWatchdogSec=30s` / `RebootWatchdogSec=10min` and `install.sh` installs
+  it (armed at the next boot). `docs/BLOCKERS.md` now records what still needs
+  the Pi and the accepted v1 limitations; `docs/ARCHITECTURE.md` is new.
+- **Docs/tests** — `README.md`, `docs/INSTALL.md`, `docs/USAGE.md`,
+  `docs/BLOCKERS.md` and the network-placement research updated. New tests:
+  live BPF compile + queue drops, TLS modes, EVE rotation/history, incident
+  persistence/UI, durable delivery, rules-update trigger/polkit, Discord URL
+  validation, global slowdown, watchdog artifact, lockout expiry, the
+  one-hour-attack seam (600 sightings → ≤3 stored rows, one incident, count 600),
+  and v2→v3 schema upgrade.
+
+### Evidence — the gate, run on the final tree
+
+```text
+$ uv sync --frozen              → Checked 47 packages in 0.51ms
+$ uv run ruff check .           → All checks passed!
+$ uv run ruff format --check .  → 82 files already formatted
+$ uv run pyright                → 0 errors, 0 warnings, 0 informations
+$ uv run pytest -q              → exit 0 (467/480 tests collected; 13 e2e deselected)
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome -q → 13 passed
+```
+
+The first e2e run after the Discord allowlist landed failed on its fixture, which
+used `http://127.0.0.1:9/hooks/e2e-fake` — exactly the arbitrary URL the new
+validation exists to reject. The fixture was changed to a syntactically valid
+Discord endpoint (nothing is sent), and the suite passed. That failure is the
+evidence the allowlist is live in the real UI path, not only in unit tests.
+
 ## Notes
 
 - Web access confirmed 2026-10-14. Suricata **8.0.7** current stable (2026-09-15); 7.x EOL.

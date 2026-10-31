@@ -24,6 +24,7 @@ from gilgamesh.web.auth import (
     DEFAULT_PASSWORD_HASHER,
     AuthService,
     LockoutPolicy,
+    LoginSlowdown,
     PasswordPolicyError,
     create_auth_service,
     hash_password,
@@ -270,6 +271,24 @@ def test_lockout_expires() -> None:
     assert policy.is_locked("key") is False
 
 
+def test_auth_service_feeds_the_lockout_clock_in_its_own_time_base(db: Database) -> None:
+    """A locked client must be released after the lockout, not on the next restart."""
+    policy = LockoutPolicy(
+        max_attempts=2,
+        window=timedelta(minutes=15),
+        lockout=timedelta(minutes=1),
+        clock=lambda: 100.0,
+    )
+    auth = AuthService(db, lockout=policy, clock=lambda: 1_700_000_000.0)
+    auth.create_user("admin", "a perfectly long passphrase")
+    for _ in range(2):
+        auth.login("admin", "wrong passphrase", client="10.0.0.66")
+
+    assert policy.is_locked("client:10.0.0.66") is True
+    policy.advance(61.0)
+    assert policy.is_locked("client:10.0.0.66") is False
+
+
 def test_lockout_is_per_key() -> None:
     policy = LockoutPolicy(
         max_attempts=2, window=timedelta(minutes=15), lockout=timedelta(minutes=15)
@@ -318,6 +337,76 @@ def test_an_attacker_cannot_lock_the_owner_out_from_a_different_address(
     assert auth.login("admin", "a perfectly long passphrase", client="10.0.0.5") is not None
     # …while the attacker's address stays throttled.
     assert auth.login("admin", "a perfectly long passphrase", client="10.0.0.66") is None
+
+
+# --- global slowdown ----------------------------------------------------------
+
+
+def test_global_slowdown_is_quiet_below_the_threshold() -> None:
+    slowdown = LoginSlowdown(threshold=3, window=timedelta(minutes=5))
+
+    slowdown.record_failure(0.0)
+    slowdown.record_failure(1.0)
+
+    assert slowdown.delay_for(2.0) == 0.0
+
+
+def test_global_slowdown_grows_with_persistent_failures() -> None:
+    slowdown = LoginSlowdown(threshold=2, window=timedelta(minutes=5), step=0.5, max_delay=2.0)
+    slowdown.record_failure(0.0)
+    slowdown.record_failure(1.0)
+    first = slowdown.delay_for(2.0)
+    slowdown.record_failure(2.0)
+    second = slowdown.delay_for(3.0)
+
+    assert first == pytest.approx(0.5)
+    assert second > first
+    assert second <= 2.0
+
+
+def test_global_slowdown_forgets_old_failures() -> None:
+    slowdown = LoginSlowdown(threshold=2, window=timedelta(minutes=1))
+    slowdown.record_failure(0.0)
+    slowdown.record_failure(1.0)
+
+    assert slowdown.delay_for(61.0) == 0.0
+
+
+def test_rotating_client_addresses_still_hits_the_global_slowdown(db: Database) -> None:
+    """Per-client lockout is useless against spoofed sources; the global delay is not."""
+    slept: list[float] = []
+    auth = AuthService(
+        db,
+        slowdown=LoginSlowdown(threshold=3, window=timedelta(minutes=5), step=0.25, max_delay=2.0),
+        sleeper=slept.append,
+    )
+    auth.create_user("admin", "a perfectly long passphrase")
+
+    for index in range(3):
+        auth.login("admin", "wrong passphrase", client=f"10.0.0.{index + 1}")
+    assert slept == []  # three separate clients, none of them individually locked
+
+    auth.login("admin", "wrong passphrase", client="10.0.0.99")
+
+    assert slept and slept[-1] > 0.0
+
+
+def test_global_slowdown_still_allows_a_correct_login(db: Database) -> None:
+    """The slowdown buys time; it must never become a denial of service for the owner."""
+    slept: list[float] = []
+    auth = AuthService(
+        db,
+        slowdown=LoginSlowdown(threshold=2, window=timedelta(minutes=5), step=0.25, max_delay=2.0),
+        sleeper=slept.append,
+    )
+    auth.create_user("admin", "a perfectly long passphrase")
+    auth.login("admin", "wrong passphrase", client="10.0.0.1")
+    auth.login("admin", "wrong passphrase", client="10.0.0.2")
+
+    session = auth.login("admin", "a perfectly long passphrase", client="10.0.0.3")
+
+    assert session is not None
+    assert slept and slept[-1] > 0.0
 
 
 # --- HTTP surface -------------------------------------------------------------

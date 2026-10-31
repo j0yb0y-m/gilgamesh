@@ -421,6 +421,31 @@ def test_alerts_can_be_searched(client: TestClient, tmp_path: Path) -> None:
     assert "unrelated notice" not in response.text
 
 
+def test_alert_pages_show_how_often_an_incident_recurred(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Repeated sightings fold into one alert, so the count is the owner's evidence."""
+    database = Database(tmp_path / "gilgamesh.db")
+    database.initialize()
+    event = Event(
+        type=EventType.ARP_SPOOF,
+        severity=Severity.HIGH,
+        detector="arp",
+        summary="Gateway MAC changed",
+        src_ip="10.0.0.2",
+    )
+    incident_id = database.create_incident(event)
+    database.update_incident(incident_id, count=47, last_ts=event.ts.isoformat())
+    database.insert_event(event.model_copy(update={"incident_id": incident_id}))
+    database.close()
+
+    listing = client.get("/alerts")
+    detail = client.get(f"/alerts/{event.id}")
+
+    assert "seen 47\u00d7" in listing.text
+    assert "47 times" in detail.text
+
+
 def test_alert_detail_shows_evidence(client: TestClient, tmp_path: Path) -> None:
     event_id = seed_event(tmp_path / "gilgamesh.db")
 

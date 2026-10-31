@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     #: Sensor-only: Suricata's EVE JSON log to tail. When unset, Suricata
     #: ingestion is off and the custom detectors are the only source.
     suricata_eve_path: Path | None = None
+    #: Web TLS. ``https_mode`` is an owner preference stored in the database; these
+    #: paths are only read in "provided" mode, so a certificate never has to be
+    #: copied into the state directory or committed to the repository.
+    tls_certfile: Path | None = None
+    tls_keyfile: Path | None = None
+    #: Extra comma-separated DNS names/IPs for the generated self-signed certificate.
+    #: The machine's own hostname and resolved addresses are added automatically.
+    tls_hostname: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

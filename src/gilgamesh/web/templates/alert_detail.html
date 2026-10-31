@@ -38,6 +38,7 @@
         ("Source MAC", event.src_mac or "—"),
         ("Destination IP", event.dst_ip or "—"),
         ("Interface", event.interface or "—"),
+        ("Seen", event.incident_count ~ (" time" if event.incident_count == 1 else " times")),
         ("Time", event.ts.isoformat()),
       ] %}
         <div>

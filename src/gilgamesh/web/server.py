@@ -8,11 +8,18 @@ receive a share of the events.
 
 from __future__ import annotations
 
+import logging
+
 import uvicorn
 
 from gilgamesh.config import Settings
+from gilgamesh.db import Database
+from gilgamesh.preferences import Preferences, PreferencesStore
 from gilgamesh.util.logging import configure_logging
 from gilgamesh.web.app import create_app
+from gilgamesh.web.tls import TlsConfigError, resolve_tls_config
+
+logger = logging.getLogger(__name__)
 
 #: How long Uvicorn waits for in-flight requests before cancelling them. This exists
 #: because of an ordering detail in Uvicorn: on SIGTERM it stops accepting connections,
@@ -39,9 +46,43 @@ def main() -> None:
     """
     configure_logging()
     settings = Settings()
-    uvicorn.run(
-        create_app(settings),
-        host=settings.host,
-        port=settings.port,
-        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
-    )
+    preferences = _owner_preferences(settings)
+    try:
+        tls = resolve_tls_config(settings, preferences)
+    except TlsConfigError as exc:
+        # Serving plain HTTP after the owner asked for HTTPS would be a silent
+        # downgrade. Refuse to start and let the journal say exactly what is missing.
+        logger.error("cannot start the web server: %s", exc)
+        raise SystemExit(2) from exc
+
+    app = create_app(settings)
+    if tls is None:
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
+        )
+    else:
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
+            ssl_certfile=str(tls.certfile),
+            ssl_keyfile=str(tls.keyfile),
+        )
+
+
+def _owner_preferences(settings: Settings) -> Preferences:
+    """Read the owner's stored choices before the app starts, then close the handle.
+
+    The web process keeps its own connection for the app's lifetime; this short-lived
+    one exists only because TLS must be configured *before* Uvicorn binds the socket.
+    """
+    database = Database(settings.db_path)
+    try:
+        database.initialize()
+        return PreferencesStore(database).get()
+    finally:
+        database.close()

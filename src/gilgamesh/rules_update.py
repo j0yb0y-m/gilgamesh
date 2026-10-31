@@ -1,9 +1,13 @@
 """Update the Suricata rules and reload them.
 
 This is the one place that turns "the rules may be out of date" into "the ruleset is
-current", and both fronts call it: the ``gilgamesh-rules-update`` oneshot (run by a
-daily systemd timer, and by hand) and the "Update rules" button on the Health page.
-Keeping it in the library means the button and the unit can never drift apart.
+current". Two fronts reach it:
+
+* the ``gilgamesh-rules-update`` oneshot (run by a daily systemd timer, and by hand)
+  executes :func:`refresh_rules` itself;
+* the "Update rules" button on the Health page cannot run it directly — the web unit
+  is sandboxed without write access to Suricata's directories — so it calls
+  :func:`trigger_rules_update_service`, which asks systemd to start that same oneshot.
 
 Two things happen, in order, and any failure is *reported*, never raised:
 
@@ -39,6 +43,10 @@ from gilgamesh.util.logging import configure_logging
 #: A runner takes an argv list and returns the completed process. Injectable so tests
 #: never shell out.
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
+
+#: The one unit the unprivileged web tier may ask systemd to start. The matching polkit
+#: rule lives in ``deploy/polkit/50-gilgamesh.rules``.
+RULES_UPDATE_UNIT = "gilgamesh-rules-update.service"
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
@@ -109,6 +117,43 @@ def refresh_rules(
     return RulesUpdateResult(True, tuple(steps))
 
 
+def trigger_rules_update_service(
+    *,
+    runner: Runner | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> RulesUpdateResult:
+    """Ask systemd to run the rules-update oneshot and wait for it to finish.
+
+    The web unit is deliberately hardened and has no write access to Suricata's rule
+    directories. The oneshot unit does. A narrow polkit rule lets the ``gilgamesh``
+    user start exactly this unit, so the button works without widening the web
+    sandbox or giving the web process a shell.
+    """
+    run = runner if runner is not None else default_runner(timeout)
+    command = ["systemctl", "start", "--wait", RULES_UPDATE_UNIT]
+    try:
+        completed = run(command)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("could not start %s: %s", RULES_UPDATE_UNIT, exc)
+        return RulesUpdateResult(False, (), f"could not start {RULES_UPDATE_UNIT}: {exc}")
+    if completed.returncode != 0:
+        detail = _first_line(completed.stderr) or _first_line(completed.stdout)
+        message = f"{RULES_UPDATE_UNIT} failed"
+        if detail:
+            message = f"{message}: {detail}"
+        return RulesUpdateResult(False, (f"systemctl exited {completed.returncode}",), message)
+    return RulesUpdateResult(True, ("rules update service completed",))
+
+
+def _first_line(text: str) -> str | None:
+    """The first non-empty line of command output, bounded for a web notice."""
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:300]
+    return None
+
+
 def _record_version(settings: Settings, updater: subprocess.CompletedProcess[str]) -> None:
     """Stamp the successful update so the Health page can show when it last ran."""
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
@@ -146,9 +191,11 @@ def main() -> None:
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
+    "RULES_UPDATE_UNIT",
     "RulesUpdateResult",
     "default_runner",
     "main",
     "read_rules_version",
     "refresh_rules",
+    "trigger_rules_update_service",
 ]

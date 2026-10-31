@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from queue import Queue
+from queue import Full, Queue
 from typing import Protocol
 
 from scapy.error import Scapy_Exception
@@ -29,7 +29,18 @@ logger = logging.getLogger(__name__)
 #: Berkeley Packet Filter applied before anything reaches Python. On a home uplink this
 #: is the difference between a few thousand packets per second and a saturated CPU: it
 #: drops the bulk of TCP payload traffic in the kernel before Scapy ever sees it.
-DEFAULT_BPF = "arp or (udp port 53) or (udp port 67 or 68) or icmp or icmp6"
+#:
+#: The TCP clause keeps only handshake/teardown flags. The scan and SYN-flood detectors
+#: need SYN, SYN-ACK, FIN and RST; without it they never received a single TCP packet on
+#: a live interface, while PCAP replay (which bypasses this filter) kept the tests green.
+DEFAULT_BPF = (
+    "arp or (udp port 53) or (udp port 67 or 68) or icmp or icmp6 "
+    "or (tcp[tcpflags] & (tcp-syn|tcp-fin|tcp-rst) != 0)"
+)
+
+#: How many captured packets may wait for the detection loop. 10k is a few megabytes at
+#: most and absorbs a burst without letting a stalled detector grow memory without bound.
+DEFAULT_MAX_QUEUE = 10_000
 
 
 class PacketSource(Protocol):
@@ -119,32 +130,59 @@ class LiveSource:
         interface: str,
         bpf: str | None = DEFAULT_BPF,
         *,
+        max_queue: int = DEFAULT_MAX_QUEUE,
         sniffer_factory: Callable[..., object] = AsyncSniffer,
     ) -> None:
+        if max_queue < 1:
+            msg = "max_queue must be at least 1"
+            raise ValueError(msg)
         self._interface = interface
         self._bpf = bpf
+        self._max_queue = max_queue
         self._factory = sniffer_factory
+        self._packets: Queue[Packet] = Queue(maxsize=max_queue)
+        self.dropped = 0
+
+    @property
+    def bpf(self) -> str | None:
+        """The filter handed to the capture backend (None means capture everything)."""
+        return self._bpf
 
     @property
     def description(self) -> str:
         return f"live:{self._interface}"
 
+    def _put(self, packet: Packet) -> None:
+        """Queue one packet, dropping it when the detection loop has fallen behind.
+
+        Called from Scapy's sniffer thread, so it must never block: blocking here would
+        stop the capture thread and, on a full queue, look like a dead network.
+        """
+        try:
+            self._packets.put_nowait(packet)
+        except Full:
+            self.dropped += 1
+            if self.dropped == 1 or self.dropped % 1000 == 0:
+                logger.warning("capture queue full; dropped %d packets so far", self.dropped)
+
     def __iter__(self) -> Iterator[Packet]:
-        packets: Queue[Packet] = Queue()
+        self._packets = Queue(maxsize=self._max_queue)
         # store=False keeps Scapy from retaining every packet it sees; prn hands each
         # one straight to the queue instead.
-        sniffer = self._factory(
-            iface=self._interface, filter=self._bpf, store=False, prn=packets.put
-        )
+        sniffer = self._factory(iface=self._interface, filter=self._bpf, store=False, prn=self._put)
         sniffer.start()  # type: ignore[attr-defined]
         try:
             while True:
-                yield packets.get()
+                yield self._packets.get()
         finally:
             sniffer.stop()  # type: ignore[attr-defined]
 
 
-def make_source(interface: str | None = None, path: Path | None = None) -> PacketSource:
+def make_source(
+    interface: str | None = None,
+    path: Path | None = None,
+    bpf: str | None = DEFAULT_BPF,
+) -> PacketSource:
     """Build a packet source from either an interface or a file path.
 
     Exactly one must be given. A path is preferred when both are supplied, so a
@@ -153,6 +191,6 @@ def make_source(interface: str | None = None, path: Path | None = None) -> Packe
     if path is not None:
         return PcapSource(path)
     if interface:
-        return LiveSource(interface)
+        return LiveSource(interface, bpf)
     msg = "either interface or path must be provided"
     raise ValueError(msg)

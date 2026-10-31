@@ -57,6 +57,7 @@ class MaintenanceTask:
         cutoff = datetime.fromtimestamp(now - retention_days * 86_400.0, UTC).isoformat()
         removed = {
             "events": self._db.prune_events(cutoff, delivered_rowid=delivered_rowid),
+            "incidents": self._db.prune_incidents(cutoff),
             "login_attempts": self._db.prune_login_attempts(now - LOGIN_ATTEMPT_RETENTION_SECONDS),
             "audit_log": self._db.prune_audit_log(now - AUDIT_RETENTION_SECONDS),
             "sessions": self._db.prune_expired_sessions(now - STALE_SESSION_SECONDS),

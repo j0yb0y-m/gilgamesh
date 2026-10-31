@@ -1,0 +1,20 @@
+/* Allow the unprivileged Gilgamesh web user to start exactly one unit.
+ *
+ * The Health page's "Update rules" button cannot run suricata-update inside the web
+ * sandbox: that unit is deliberately hardened and has no write access to Suricata's
+ * rule directories. The button instead asks systemd to run the existing
+ * gilgamesh-rules-update.service oneshot, which does have that access.
+ *
+ * This rule is the whole privilege grant: one D-Bus action, one verb, one unit, one
+ * user. It is not general systemctl access and it does not let the web tier run a
+ * shell as root. Polkit consults rules.d in lexical order; the 50- prefix lets a local
+ * administrator override this file with a later 60- rule if their deployment differs.
+ */
+polkit.addRule(function (action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "gilgamesh-rules-update.service" &&
+        action.lookup("verb") === "start" &&
+        subject.user === "gilgamesh") {
+        return polkit.Result.YES;
+    }
+});

@@ -20,6 +20,7 @@ import re
 import sqlite3
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
@@ -36,6 +37,11 @@ from gilgamesh.notifiers.email import EmailChannel
 from gilgamesh.notifiers.telegram import TelegramChannel
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+#: Discord hands the owner a URL of exactly this shape. It is a bearer credential, so
+#: the Pi must only ever POST it to Discord itself — an arbitrary URL would let a typo
+#: or a crafted form turn the notification worker into an SSRF client against the LAN.
+_DISCORD_WEBHOOK_PATH = re.compile(r"^/api/webhooks/\d{1,32}/[A-Za-z0-9._-]{1,200}$")
 
 #: The fields each kind understands. Anything else in a submitted form is ignored, so a
 #: crafted POST cannot inject an unexpected key into the stored JSON.
@@ -124,6 +130,35 @@ def _parse_severity(value: str | Severity) -> Severity:
         raise ChannelConfigError(f"minimum severity must be one of: {allowed}") from exc
 
 
+def _parse_discord_webhook(value: str) -> str:
+    """Accept only the documented Discord webhook endpoint, and never echo it back.
+
+    The URL contains the webhook token, so an error message names the expected shape
+    instead of quoting the submitted value.
+    """
+    expected = "https://discord.com/api/webhooks/<id>/<token>"
+    try:
+        parts = urlsplit(value)
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError:
+        # ``urlsplit`` defers port/host parsing; a malformed value must be a form
+        # error, not a 500 from the Notifications page.
+        raise ChannelConfigError(f"Discord webhook URL must look like {expected}") from None
+    if (
+        parts.scheme != "https"
+        or hostname != "discord.com"
+        or port is not None
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or not _DISCORD_WEBHOOK_PATH.match(parts.path)
+    ):
+        raise ChannelConfigError(f"Discord webhook URL must look like {expected}")
+    return value
+
+
 def _coerce_field(name: str, raw: str) -> object:
     if name in _INT_FIELDS:
         return _parse_port(raw)
@@ -131,7 +166,10 @@ def _coerce_field(name: str, raw: str) -> object:
         return _parse_bool(raw)
     if name in _LIST_FIELDS:
         return [item.strip() for item in re.split(r"[,\s]+", raw.strip()) if item.strip()]
-    return raw.strip()
+    value = raw.strip()
+    if name == "webhook_url":
+        return _parse_discord_webhook(value)
+    return value
 
 
 class ChannelStore:

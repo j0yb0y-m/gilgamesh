@@ -76,7 +76,11 @@ The list shows **every** event from day one, newest first. Filters sit above:
 - **Type** — only `dns_spoof`, only `new_device`, and so on.
 - **Search** — free-text over the alert summaries ("mybank", "10.0.0.90").
 
-Every row is a link to the full detail page.
+Every row is a link to the full detail page. A row that kept happening carries
+**`· seen N×`**: Gilgamesh stores one alert for a sustained attack instead of
+thousands, but it still counts every sighting, including the repeats held back
+by the cooldown and rate limit. The detail page's **Facts** card repeats the
+same total as **Seen**.
 
 ### The detail page — the evidence, not just the headline
 
@@ -85,7 +89,8 @@ Every row is a link to the full detail page.
 Two sections:
 
 - **Facts** — the summary in fixed fields: severity, type, which detector
-  spoke, source MAC/IP, destination, interface, exact time.
+  spoke, source MAC/IP, destination, interface, how many times the incident was
+  seen, exact time.
 - **Evidence** — the raw numbers the detector saw (for a DNS alert: the query
   name, the answer, the DNS transaction id, whether anything looked
   TTL-manipulated). This is what makes Gilgamesh rule out vandalism: when a
@@ -251,9 +256,13 @@ learns nothing, and a blank field keeps the stored value instead of wiping it.
 
 Four tiles (**CPU / Memory / Disk / Uptime**), an **Interfaces** card, and a
 **Detection rules** card summarising every rule's state. The **Update rules
-now** button runs `suricata-update` for you there and then. What makes this page trustworthy when
-it matters is the inverse: when a box dies or senses nothing, it says so here
-instead of silently refusing to complain.
+now** button asks systemd to run the rules-update job (the web process itself
+stays sandboxed and cannot write Suricata's directories); the result appears on
+the same page. The capture tile also reports **capture drops** — packets the
+bounded live queue had to discard — and turns amber when that number is
+non-zero, because that means the box is overloaded and alerts may be missing.
+What makes this page trustworthy when it matters is the inverse: when a box dies
+or senses nothing, it says so here instead of silently refusing to complain.
 
 ---
 
@@ -268,7 +277,14 @@ instead of silently refusing to complain.
   actual interface *changes* remain the installer's / Mode B command's job,
   never the web app's — Gilgamesh never touches the host's networking.
 - **HTTPS** — `off` (plain HTTP on your LAN — the default, and fine inside a
-  home), a `self-signed` generated key, or a `provided-by-you` key pair.
+  home), `self-signed` (Gilgamesh generates a certificate and key under
+  `/var/lib/gilgamesh/tls/`), or `provided` (you supply the pair through
+  `GILGAMESH_TLS_CERTFILE` / `GILGAMESH_TLS_KEYFILE` in
+  `/etc/gilgamesh/gilgamesh.env`). A change is applied when the web service
+  restarts — the page is served on the old scheme until then. Self-signed
+  encrypts the session and the password, but browsers will warn until you trust
+  the certificate. If `provided` is selected and a file is missing or unreadable,
+  the service refuses to start rather than silently downgrading to HTTP.
 - **Account** — change the admin password (asks for the current one; the
   policy is the same as at setup).
 - **About this box** — what the service actually named itself and which rules

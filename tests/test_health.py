@@ -128,11 +128,14 @@ def test_last_event_and_rule_version_can_be_attached(tmp_path: Path) -> None:
     )
 
     stamped = report.with_context(
-        last_event_ts=datetime(2026, 10, 14, 12, 0, tzinfo=UTC), rule_version="ET Open 2026-10-13"
+        last_event_ts=datetime(2026, 10, 14, 12, 0, tzinfo=UTC),
+        rule_version="ET Open 2026-10-13",
+        sensor_packets_dropped=7,
     )
 
     assert stamped.last_event_ts == datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
     assert stamped.rule_version == "ET Open 2026-10-13"
+    assert stamped.sensor_packets_dropped == 7
     assert report.last_event_ts is None  # the original is untouched
 
 

@@ -54,6 +54,7 @@ import os
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Protocol, cast
 
@@ -66,6 +67,10 @@ logger = logging.getLogger(__name__)
 #: How long the tailer waits before retrying an exhausted read. Half a second keeps
 #: alert latency low without spinning a core on the Pi.
 FOLLOW_POLL_SECONDS = 0.5
+
+#: ``app_settings`` prefix for the last safely-consumed position in an EVE file. One row
+#: per path so a deployment that points the sensor at a different log starts clean.
+POSITION_KEY_PREFIX = "suricata_eve_position:"
 
 
 class StopSignal(Protocol):
@@ -155,29 +160,48 @@ class EveIngestor:
         ``stop`` is any object with an ``is_set()`` method; passing ``None`` follows
         forever. Intended to be called with ``threading.Event`` from the sensor service.
 
-        At end-of-file the loop *sleeps* and retries, and re-opens the file when its
-        inode changes — Suricata rotates ``eve.json`` by renaming, and a tailer that
-        spins on an exhausted read burns the CPU the copy has to spare.
+        **History is not news.** On the first open the tailer starts at the end of the
+        file, so a month-old alert is not re-sent to Discord/Telegram/email every time
+        the sensor restarts. When a database is available the inode and byte offset are
+        persisted after each yielded alert; a crash therefore replays at most the one
+        alert that was being delivered, which is the safe direction.
+
+        At end-of-file the loop *sleeps* and retries, and re-opens the file at byte zero
+        when its inode changes — Suricata rotates ``eve.json`` by renaming, and the new
+        file is new data, not history.
 
         A missing file is waited for rather than treated as an error: at boot the sensor
         normally starts before Suricata has created its log, and giving up there would
         silently disable Suricata ingestion until the next restart.
         """
-        buffer = ""
         handle = None
         inode = -1
+        offset = 0
+        first_open = True
+        waited_for_file = False
         try:
             while True:
                 if stop is not None and stop.is_set():
                     return
                 if handle is None:
                     try:
-                        handle, inode = _open_following(path)
+                        if first_open and not waited_for_file:
+                            handle, inode, offset = self._open_initial(path)
+                            first_open = False
+                        else:
+                            # A file that appeared after the sensor started, or a
+                            # rotated file, contains new data: read it from byte zero.
+                            handle, inode = _open_from_start(path)
+                            first_open = False
+                            offset = 0
+                            self._save_position(path, inode, offset)
                     except OSError:
+                        waited_for_file = True
                         time.sleep(FOLLOW_POLL_SECONDS)
                         continue
-                chunk = handle.read()
-                if not chunk:
+
+                line = handle.readline()
+                if not line:
                     time.sleep(FOLLOW_POLL_SECONDS)
                     try:
                         current = path.stat()
@@ -185,18 +209,64 @@ class EveIngestor:
                         continue
                     if current.st_ino != inode:
                         handle.close()
-                        handle, inode = _open_following(path)
-                        buffer = ""
+                        handle = None
                     continue
-                buffer += chunk
-                *lines, buffer = buffer.split("\n")
-                for line in lines:
-                    event = self.parse_line(line)
-                    if event is not None:
-                        yield event
+                if not line.endswith("\n"):
+                    # A record still being written. Rewind and read it again whole.
+                    handle.seek(offset)
+                    time.sleep(FOLLOW_POLL_SECONDS)
+                    continue
+
+                offset = handle.tell()
+                event = self.parse_line(line)
+                if event is not None:
+                    yield event
+                    # Persist only after the consumer has taken the event: a crash
+                    # between the two replays it (at-least-once), never loses it.
+                    self._save_position(path, inode, offset)
         finally:
             if handle is not None:
                 handle.close()
+
+    def _open_initial(self, path: Path) -> tuple[IO[str], int, int]:
+        """Open for the first time, resuming a persisted position or seeking to the end."""
+        stored = self._load_position(path)
+        if stored is None:
+            return _open_at_end(path)
+        inode, offset = stored
+        try:
+            size = path.stat().st_size
+            if path.stat().st_ino == inode and 0 <= offset <= size:
+                handle = path.open(encoding="utf-8", errors="replace")
+                handle.seek(offset)
+                return handle, inode, offset
+        except OSError:
+            pass
+        return _open_at_end(path)
+
+    def _load_position(self, path: Path) -> tuple[int, int] | None:
+        if self._database is None:
+            return None
+        raw = self._database.get_setting(f"{POSITION_KEY_PREFIX}{path}")
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+            return int(parsed["inode"]), int(parsed["offset"])
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def _save_position(self, path: Path, inode: int, offset: int) -> None:
+        if self._database is None:
+            return
+        try:
+            self._database.set_setting(
+                f"{POSITION_KEY_PREFIX}{path}",
+                json.dumps({"inode": inode, "offset": offset}, separators=(",", ":")),
+            )
+        except Exception:
+            # A counter that cannot be persisted is not a reason to stop ingesting.
+            logger.exception("could not persist the Suricata log position")
 
     def _submit(self, event: Event) -> bool:
         if self._pipeline.submit(event).decision is not PipelineDecision.STORE:
@@ -246,6 +316,7 @@ def parse_eve_line(line: str, severity_map: Mapping[int, Severity] | None = None
     )
 
     return Event(
+        ts=_parse_timestamp(record.get("timestamp")),
         type=EventType.SURICATA_ALERT,
         severity=severity,
         detector=EveIngestor.name,
@@ -333,14 +404,35 @@ def suricatasc_reload_command(unix_socket: Path | None = None) -> list[str]:
     return command
 
 
-def _open_following(path: Path) -> tuple[IO[str], int]:
-    """Open an EVE file for following, returning the handle and its inode.
+def _open_at_end(path: Path) -> tuple[IO[str], int, int]:
+    """Open an existing file for following from its current end."""
+    handle = path.open(encoding="utf-8", errors="replace")
+    size = path.stat().st_size
+    handle.seek(size)
+    return handle, path.stat().st_ino, size
 
-    Suricata rotates ``eve.json`` by renaming it, so the tailer compares the inode and
-    re-opens rather than reading a descriptor to a file nobody writes to any more.
-    """
+
+def _open_from_start(path: Path) -> tuple[IO[str], int]:
+    """Open a newly-created (rotated) file at byte zero."""
     handle = path.open(encoding="utf-8", errors="replace")
     return handle, path.stat().st_ino
+
+
+def _parse_timestamp(value: object) -> datetime:
+    """Suricata's ISO-8601 timestamp, or the current time when it is unusable.
+
+    EVE writes ``2026-10-14T09:00:00.123456+0000``. ``datetime.fromisoformat`` accepts
+    that shape on Python 3.13; a malformed value must not drop the alert, so it falls
+    back to "now" and the record's other evidence still reaches the owner.
+    """
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            pass
+        else:
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return datetime.now(UTC)
 
 
 def _optional_str(value: object) -> str | None:

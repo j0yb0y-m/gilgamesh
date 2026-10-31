@@ -40,7 +40,7 @@ from scapy.packet import Packet
 from gilgamesh.db import Database
 from gilgamesh.devices import DeviceStore
 from gilgamesh.models import Event
-from gilgamesh.pipeline import Pipeline, PipelineDecision
+from gilgamesh.pipeline import Pipeline, PipelineDecision, PipelineResult
 from gilgamesh.rules import RuleConfigService
 from gilgamesh.sensors.base import PacketDetector
 from gilgamesh.sensors.capture import DEFAULT_BPF, PacketSource, make_source
@@ -56,6 +56,13 @@ DEVICE_REFRESH_SECONDS = 60.0
 
 #: Where Linux exposes the routing table the gateway lookup reads.
 PROC_ROUTE = Path("/proc/net/route")
+
+#: Shared-database keys the web tier reads for the Health page.
+SENSOR_PACKETS_PROCESSED_KEY = "sensor_packets_processed"
+SENSOR_PACKETS_DROPPED_KEY = "sensor_packets_dropped"
+
+#: How often the live loop publishes its counters while packets keep arriving.
+STATS_INTERVAL_SECONDS = 30.0
 
 #: ``dns.spoofing``'s sensitivity scales the conflicting-answer threshold: strict
 #: halves it (more alerts), relaxed doubles it (fewer), balanced is the stored value.
@@ -93,11 +100,14 @@ class SensorRunner:
         device_store: DeviceStore | None = None,
         gate: RuleGate | None = None,
         clock: Callable[[], float] | None = None,
+        source_factory: Callable[..., PacketSource] | None = None,
     ) -> None:
         self._detectors = list(detectors)
         self._database = database
         self._pipeline = pipeline
         self._config = config if config is not None else SensorRunnerConfig()
+        self._source_factory = source_factory if source_factory is not None else make_source
+        self._source: PacketSource | None = None
         #: When set, every observed device is mirrored into the inventory table so the web
         #: tier (a different process) can render the Devices page. Optional so the runner
         #: stays usable in tests that only care about detectors.
@@ -111,6 +121,10 @@ class SensorRunner:
         #: The pipeline is stateful and the Suricata tailer is a second thread, so every
         #: submission is serialised here rather than mutating its state concurrently.
         self._submit_lock = Lock()
+        #: Pipeline incident ids are local to this process and restart at 1; the
+        #: database ids that events point at must not. Each new logical incident gets
+        #: one row via ``AUTOINCREMENT`` and the mapping is kept here.
+        self._incident_ids: dict[int, int] = {}
 
     @property
     def packets_processed(self) -> int:
@@ -127,6 +141,7 @@ class SensorRunner:
             self._handle(packet)
             processed += 1
         self._processed += processed
+        self._publish_source_stats()
         return processed
 
     def run_forever(self, stop: ThreadEvent | None = None) -> int:
@@ -137,19 +152,41 @@ class SensorRunner:
         read of a live source (see :func:`main`).
         """
         processed = 0
+        next_stats = self._clock() + STATS_INTERVAL_SECONDS
         for packet in self._build_source():
             if stop is not None and stop.is_set():
                 break
             self._handle(packet)
             self._processed += 1
             processed += 1
+            if self._clock() >= next_stats:
+                self._publish_source_stats()
+                next_stats = self._clock() + STATS_INTERVAL_SECONDS
+        self._publish_source_stats()
         return processed
 
     def _build_source(self) -> PacketSource:
-        return make_source(
+        self._source = self._source_factory(
             interface=self._config.interface,
             path=self._config.source,
+            bpf=self._config.bpf,
         )
+        return self._source
+
+    def _publish_source_stats(self) -> None:
+        """Expose the live loop's counters through the shared database.
+
+        The web process cannot read the sensor's memory, and the Health page must be
+        able to say "packets are being dropped" rather than looking calm. A failed write
+        is not worth stopping detection for.
+        """
+        source = getattr(self, "_source", None)
+        dropped = int(getattr(source, "dropped", 0) or 0)
+        try:
+            self._database.set_setting(SENSOR_PACKETS_PROCESSED_KEY, str(self._processed))
+            self._database.set_setting(SENSOR_PACKETS_DROPPED_KEY, str(dropped))
+        except Exception:
+            logger.exception("could not publish capture counters")
 
     def _handle(self, packet: Packet) -> None:
         """Run one packet through every detector, then the pipeline, then storage."""
@@ -206,24 +243,66 @@ class SensorRunner:
                 logger.debug("rule settings dropped %s from %s", stamped.summary, stamped.detector)
                 return False
             result = self._pipeline.submit(stamped)
+
+            # Persist the incident before deciding whether to store the event: an
+            # attack suppressed by cooldown or a rate limit still happened, and the
+            # Health/Alerts pages must be able to show how often.
+            incident_id = self._persist_incident(stamped, result)
+
             if result.decision is not PipelineDecision.STORE:
                 logger.debug(
-                    "pipeline dropped %s from %s: %s",
+                    "pipeline dropped %s from %s: %s (incident seen %d times)",
                     stamped.summary,
                     stamped.detector,
                     result.decision,
+                    result.count,
                 )
                 return False
-            stored = stamped
-            if result.severity is not None and result.severity is not stamped.severity:
+
+            stored = stamped.model_copy(
+                update={"incident_id": incident_id, "incident_count": result.count}
+            )
+            if result.severity is not None and result.severity is not stored.severity:
                 # A re-announced incident stores the escalated severity; storing the
                 # original would silently understate what the owner is being told.
-                stored = stamped.model_copy(update={"severity": result.severity})
+                stored = stored.model_copy(update={"severity": result.severity})
             self._database.insert_event(stored)
             logger.info(
                 "stored %s event from %s: %s", stored.severity, stored.detector, stored.summary
             )
             return True
+
+    def _persist_incident(self, event: Event, result: PipelineResult) -> int | None:
+        """Create or update the database incident for one pipeline result.
+
+        Returns the database id to stamp on a stored event. A deduplicated packet is
+        deliberately not counted, so it neither creates nor updates a row.
+        """
+        if result.decision is PipelineDecision.DEDUPED or result.incident_id is None:
+            if result.incident_id is None:
+                return None
+            return self._incident_ids.get(result.incident_id)
+
+        incident_id = self._incident_ids.get(result.incident_id)
+        try:
+            if result.new_incident or incident_id is None:
+                incident_id = self._database.create_incident(event, count=result.count)
+                self._incident_ids[result.incident_id] = incident_id
+            else:
+                self._database.update_incident(
+                    incident_id,
+                    count=result.count,
+                    last_ts=event.ts.isoformat(),
+                    # Only a store carries an announcement (and possibly an escalated
+                    # severity); a quiet repeat must not downgrade it.
+                    severity=result.severity if result.decision is PipelineDecision.STORE else None,
+                )
+        except Exception:
+            # A storage failure must not stop detection. The event below will still be
+            # attempted; losing the incident row is worse than losing nothing, but not
+            # as bad as stopping the sensor.
+            logger.exception("could not persist incident for %s", event.dedup_key)
+        return incident_id
 
     def _stamped(self, event: Event) -> Event:
         """Attach the capture interface to an event that does not already name one.
@@ -368,7 +447,7 @@ def build_detectors(
 
 
 def _start_suricata_tailer(
-    path: Path | None, runner: SensorRunner, stop: ThreadEvent
+    path: Path | None, runner: SensorRunner, stop: ThreadEvent, database: Database
 ) -> Thread | None:
     """Follow Suricata's EVE log in a background thread, if one is configured.
 
@@ -382,7 +461,8 @@ def _start_suricata_tailer(
 
     from gilgamesh.sensors.suricata_ingest import EveIngestor
 
-    ingestor = EveIngestor()
+    # The database is what makes the tailer's file position durable across restarts.
+    ingestor = EveIngestor(database=database)
 
     def _tail() -> None:
         logger.info("tailing Suricata EVE log at %s", path)
@@ -460,7 +540,7 @@ def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, _handle_signal)
 
-    tailer = _start_suricata_tailer(settings.suricata_eve_path, runner, stop)
+    tailer = _start_suricata_tailer(settings.suricata_eve_path, runner, stop, db)
     mode = "replay" if settings.pcap is not None else "live"
     logger.info("sensor started: %s capture from %s", mode, source_label)
 

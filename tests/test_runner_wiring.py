@@ -206,6 +206,139 @@ def _arp_detector() -> PacketDetector:
 # --- escalated severity is what gets stored -----------------------------------
 
 
+class _Clock:
+    """Manually advanced monotonic clock for the pipeline."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _event(summary: str = "Gateway MAC changed", severity: Severity = Severity.MEDIUM) -> Event:
+    return Event(
+        type=EventType.ARP_SPOOF,
+        severity=severity,
+        detector="arp",
+        summary=summary,
+        src_ip="10.0.0.2",
+        dst_ip="10.0.0.1",
+    )
+
+
+def test_repeated_events_update_one_persisted_incident(db: Database) -> None:
+    """One sustained attack must leave one incident row whose count keeps rising."""
+    clock = _Clock()
+    pipeline = Pipeline(
+        PipelineSettings(
+            dedup_window=0.0,
+            cooldown=0.0,
+            aggregate_window=900.0,
+            rate_limit_count=100,
+            escalate_at=100,
+        ),
+        clock=clock,
+    )
+    runner = SensorRunner([], db, pipeline, SensorRunnerConfig(interface="br0"))
+
+    for _ in range(5):
+        runner.submit_event(_event())
+        clock.now += 1.0
+
+    stored = db.list_events()
+    incidents = db.query("SELECT * FROM incidents")
+    assert len(stored) == 1
+    assert len(incidents) == 1
+    assert incidents[0]["count"] == 5
+    assert stored[0].incident_id == incidents[0]["id"]
+    assert stored[0].incident_count == 5
+
+
+def test_cooldown_and_rate_limit_drops_are_still_counted(db: Database) -> None:
+    """Suppressing the announcement must not erase the fact that the attack continued."""
+    clock = _Clock()
+    pipeline = Pipeline(
+        PipelineSettings(
+            dedup_window=0.0,
+            cooldown=300.0,
+            aggregate_window=900.0,
+            rate_limit_count=100,
+            escalate_at=100,
+        ),
+        clock=clock,
+    )
+    runner = SensorRunner([], db, pipeline, SensorRunnerConfig(interface="br0"))
+
+    assert runner.submit_event(_event()) is True
+    clock.now += 10.0
+    assert runner.submit_event(_event()) is False  # cooldown
+    clock.now += 10.0
+    assert runner.submit_event(_event()) is False  # cooldown again
+
+    assert db.query("SELECT count FROM incidents")[0]["count"] == 3
+
+
+def test_rate_limited_events_are_counted(db: Database) -> None:
+    clock = _Clock()
+    pipeline = Pipeline(
+        PipelineSettings(
+            dedup_window=0.0,
+            cooldown=0.0,
+            aggregate_window=900.0,
+            rate_limit_count=1,
+            rate_limit_window=60.0,
+            escalate_at=100,
+        ),
+        clock=clock,
+    )
+    runner = SensorRunner([], db, pipeline, SensorRunnerConfig(interface="br0"))
+
+    assert runner.submit_event(_event()) is True
+    clock.now += 1.0
+    assert runner.submit_event(_event()) is False  # rate limited
+
+    assert db.query("SELECT count FROM incidents")[0]["count"] == 2
+
+
+def test_one_hour_of_continuous_attack_stores_a_handful_of_rows_and_counts_them_all(
+    db: Database,
+) -> None:
+    """The seam the audit report named: one hour of attack, one incident, honest count.
+
+    Default thresholds, an event every six seconds for an hour (600 sightings). The
+    database must stay small — that is the whole point of dedup/cooldown/rate limiting —
+    while the incident count still reflects every sighting, including the suppressed
+    ones, so the UI can say "seen 600 times".
+    """
+    clock = _Clock()
+    runner = SensorRunner([], db, Pipeline(clock=clock), SensorRunnerConfig(interface="br0"))
+
+    for _ in range(600):
+        runner.submit_event(_event())
+        clock.now += 6.0
+
+    stored = db.list_events()
+    incidents = db.query("SELECT * FROM incidents")
+    assert len(incidents) == 1
+    assert incidents[0]["count"] == 600
+    assert len(stored) <= 3
+    assert stored[-1].incident_count == 600
+
+
+def test_incident_ids_come_from_the_database_not_a_restarting_counter(db: Database) -> None:
+    """A sensor restart must not make new incidents reuse an old id."""
+    first = SensorRunner([], db, Pipeline(), SensorRunnerConfig(interface="br0"))
+    assert first.submit_event(_event()) is True
+    second = SensorRunner([], db, Pipeline(), SensorRunnerConfig(interface="br0"))
+    assert second.submit_event(_event()) is True
+
+    ids = [event.incident_id for event in sorted(db.list_events(), key=lambda e: e.ts)]
+    assert ids[0] is not None and ids[1] is not None
+    assert ids[0] != ids[1]
+    assert db.query("SELECT COUNT(*) AS n FROM incidents")[0]["n"] == 2
+
+
 def test_escalated_incident_is_stored_at_the_escalated_severity(
     tmp_path: Path, db: Database
 ) -> None:
@@ -281,6 +414,15 @@ def test_main_tails_suricata_and_exits_cleanly(
     eve = tmp_path / "eve.json"
     eve.write_text(_eve_alert() + "\n")
     data_dir = tmp_path / "data"
+    # Seed the durable tail position at byte zero, as a sensor that was already
+    # following this log would have. A fresh open deliberately ignores history.
+    seed = Database(data_dir / "gilgamesh.db")
+    seed.initialize()
+    seed.set_setting(
+        f"suricata_eve_position:{eve}",
+        json.dumps({"inode": eve.stat().st_ino, "offset": 0}),
+    )
+    seed.close()
 
     monkeypatch.setenv("GILGAMESH_DATA_DIR", str(data_dir))
     monkeypatch.setenv("GILGAMESH_PCAP", str(pcap))
@@ -355,3 +497,60 @@ def test_the_runner_stamps_the_configured_label(tmp_path: Path, db: Database) ->
     runner.run_once()
 
     assert db.list_events()[0].interface == "br0 (span)"
+
+
+# --- capture source wiring and health counters ---------------------------------
+
+
+class _FakeSource:
+    """A finite packet source that also reports capture drops, like ``LiveSource``."""
+
+    description = "fake:capture"
+
+    def __init__(self, packets: list[Packet], dropped: int = 0) -> None:
+        self._packets = packets
+        self.dropped = dropped
+
+    def __iter__(self) -> Iterator[Packet]:
+        return iter(self._packets)
+
+
+def test_runner_passes_the_configured_bpf_to_the_source(db: Database) -> None:
+    """``SensorRunnerConfig.bpf`` used to be dead configuration."""
+    seen: dict[str, object] = {}
+
+    def factory(**kwargs: object) -> _FakeSource:
+        seen.update(kwargs)
+        return _FakeSource([])
+
+    runner = SensorRunner(
+        [],
+        db,
+        Pipeline(),
+        SensorRunnerConfig(interface="br0", bpf="arp or tcp"),
+        source_factory=factory,
+    )
+
+    runner.run_once()
+
+    assert seen == {"interface": "br0", "path": None, "bpf": "arp or tcp"}
+
+
+def test_runner_publishes_capture_and_drop_counts_for_the_health_page(db: Database) -> None:
+    packet = arp_reply(GATEWAY_MAC, GATEWAY_IP, HOST_MAC, HOST_IP)
+
+    def factory(**_: object) -> _FakeSource:
+        return _FakeSource([packet, packet], dropped=3)
+
+    runner = SensorRunner(
+        [],
+        db,
+        Pipeline(),
+        SensorRunnerConfig(interface="br0"),
+        source_factory=factory,
+    )
+
+    runner.run_once()
+
+    assert db.get_setting("sensor_packets_processed") == "2"
+    assert db.get_setting("sensor_packets_dropped") == "3"

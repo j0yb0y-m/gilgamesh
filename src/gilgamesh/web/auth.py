@@ -16,6 +16,11 @@
 * **Lockout** is enforced on the client address (falling back to the account name only
   for callers that have no address), so one attacker cannot lock a household out of its
   own box just by guessing the owner's password a few times.
+* **A global slowdown** sits underneath the per-client lockout. Spoofed or botnet
+  sources can rotate addresses faster than a per-client counter can react, so once
+  failures across *all* clients cross a threshold every login attempt waits a little
+  longer. It is a delay, never a refusal: a global lockout would hand any attacker a
+  trivial way to deny the owner access to their own box.
 
 The password policy accepts either a long passphrase (≥ 20 characters, which is what
 people can actually remember) or a shorter one (≥ 12) that mixes at least three character
@@ -27,6 +32,7 @@ from __future__ import annotations
 import secrets
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Protocol
@@ -164,6 +170,61 @@ class _OffsetClock:
         return self.offset
 
 
+class LoginSlowdown:
+    """Add a growing delay to every login attempt during a distributed attack.
+
+    A per-client lockout is blind to an attacker who rotates source addresses, which on
+    a home LAN is trivial (and is exactly what the ARP/DNS detectors are there to catch).
+    This counter is global on purpose: once ``threshold`` failures have been seen inside
+    ``window``, each further attempt waits ``step`` seconds per excess failure, capped at
+    ``max_delay``.
+
+    It never refuses an attempt. A global *lockout* would let anyone deny the owner
+    access to their own appliance by failing to log in from a handful of addresses; a
+    few seconds of latency costs a brute-force client far more than it costs the owner,
+    who signs in once.
+    """
+
+    def __init__(
+        self,
+        *,
+        threshold: int = 10,
+        window: timedelta = timedelta(minutes=5),
+        step: float = 0.5,
+        max_delay: float = 5.0,
+        clock: Clock = time.monotonic,
+    ) -> None:
+        self.threshold = max(1, threshold)
+        self.window = window.total_seconds()
+        self.step = max(0.0, step)
+        self.max_delay = max(0.0, max_delay)
+        self._clock = clock
+        self._failures: deque[float] = deque()
+
+    def record_failure(self, now: float | None = None) -> None:
+        """Record one failed attempt from any client."""
+        moment = self._now() if now is None else now
+        self._trim(moment)
+        self._failures.append(moment)
+
+    def delay_for(self, now: float | None = None) -> float:
+        """Seconds an attempt should wait right now; zero when traffic is normal."""
+        moment = self._now() if now is None else now
+        self._trim(moment)
+        excess = len(self._failures) - self.threshold
+        if excess < 0:
+            return 0.0
+        return min(self.max_delay, self.step * (excess + 1))
+
+    def _trim(self, moment: float) -> None:
+        while self._failures and moment - self._failures[0] > self.window:
+            self._failures.popleft()
+
+    def _now(self) -> float:
+        clock = self._clock
+        return float(clock()) if callable(clock) else 0.0
+
+
 def _character_classes(password: str) -> int:
     classes = 0
     if any(character.islower() for character in password):
@@ -221,16 +282,20 @@ class AuthService:
         *,
         hasher: PasswordHasher | None = None,
         lockout: LockoutPolicy | None = None,
+        slowdown: LoginSlowdown | None = None,
         idle_timeout: timedelta = DEFAULT_IDLE_TIMEOUT,
         absolute_timeout: timedelta = DEFAULT_ABSOLUTE_TIMEOUT,
         clock: Clock = time.time,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self._db = database
         self._hasher = hasher or DEFAULT_PASSWORD_HASHER
         self.lockout = lockout or LockoutPolicy()
+        self.slowdown = slowdown or LoginSlowdown()
         self._idle_timeout = idle_timeout.total_seconds()
         self._absolute_timeout = absolute_timeout.total_seconds()
         self._clock = clock
+        self._sleeper = sleeper
 
     def needs_setup(self) -> bool:
         """Whether the install still has no administrator account."""
@@ -291,8 +356,16 @@ class AuthService:
         Lockout is enforced on the client address when one is known — the property that
         matters on a home LAN, where a misbehaving guest must not be able to lock the
         owner out of their own box — and on the account only for callers that have no
-        address (a local check).
+        address (a local check). A global slowdown delays attempts once failures from
+        many addresses add up, without ever refusing the owner.
+
+        This method blocks (Argon2 and the slowdown delay), so HTTP callers run it in a
+        worker thread rather than on the event loop.
         """
+        delay = self.slowdown.delay_for(self._now())
+        if delay > 0:
+            self._sleeper(delay)
+
         account_key = f"user:{username}"
         client_key = f"client:{client}" if client else None
         lock_key = client_key or account_key
@@ -421,7 +494,11 @@ class AuthService:
 
     def _fail(self, lock_key: str) -> None:
         now = self._now()
-        self.lockout.record_failure(lock_key, now)
+        # The lockout has its own monotonic clock; passing wall-clock time here made
+        # every lockout effectively permanent (monotonic never reaches 1.7e9). The
+        # persisted attempt below is the one that needs wall-clock time.
+        self.lockout.record_failure(lock_key)
+        self.slowdown.record_failure(now)
         # Record under the same key the lockout uses, so the persisted count can back it.
         self._db.record_login_attempt(lock_key, now, False)
 

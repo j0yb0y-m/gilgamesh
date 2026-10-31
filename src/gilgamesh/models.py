@@ -88,6 +88,10 @@ class Event(BaseModel):
     interface: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
     incident_id: int | None = None
+    #: How many times this incident has been seen. Populated when an event is read
+    #: back from the database (it is joined from the incident row), so the UI can say
+    #: "seen 47 times" without storing a copy on every event.
+    incident_count: int = 1
 
     @computed_field  # type: ignore[prop-decorator]
     @property
