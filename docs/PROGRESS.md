@@ -1129,6 +1129,134 @@ validation exists to reject. The fixture was changed to a syntactically valid
 Discord endpoint (nothing is sent), and the suite passed. That failure is the
 evidence the allowlist is live in the real UI path, not only in unit tests.
 
+## v1.2 — Behavioural analytics + optional AI explanations (2026-11-10) — branch `gilgamesh-v1-2`
+
+Always-on, local behavioural analytics (no LLM) plus optional, provider-agnostic AI
+explanations on the alert detail page. Detection stays statistical and explainable;
+the AI is an opt-in reading aid with a deterministic template fallback. Schema **4**
+adds `device_activity`, `device_destinations`, `device_baselines`, `ai_explanations`,
+and the `behaviour_status` setting. No new runtime dependency (`httpx` and
+`cryptography` were already in the tree), no CDN, no Node.js, no Docker, and the
+sensor process never calls a provider.
+
+The full design and task plan live in
+`docs/superpowers/specs/2026-11-01-gilgamesh-v1-2-behaviour-ai-design.md` and
+`docs/superpowers/plans/2026-11-01-gilgamesh-v1-2-behaviour-ai.md`.
+
+### Milestones
+
+| # | Deliverable | Proof |
+|---|---|---|
+| M1 | EVE flow/DNS tailer, device attribution, 15-minute activity buckets | `tests/test_behaviour_eve.py`, `tests/test_behaviour_aggregate.py`, `tests/test_behaviour_service.py` |
+| M2 | Baselines, calibration, volume/destination/beaconing signals, hourly episodes | `tests/test_behaviour_baseline.py`, `tests/test_behaviour_signals.py`, `tests/test_behaviour_acceptance.py` |
+| M3 | Device list/detail pages, sparklines, calibration state, Health tile | `tests/test_behaviour_ui.py`, `tests/test_behaviour_sparkline.py`, `tests/test_ui_routes.py`, `tests/e2e` |
+| M4 | AI settings, Fernet key at rest, nine presets, Test connection, URL policy | `tests/test_ai_settings.py`, `tests/test_ai_secrets.py`, `tests/test_ai_providers.py`, `tests/test_ai_routes.py` |
+| M5 | Explanation service, prompt, redaction whitelist, cache, circuit breaker, templates | `tests/test_ai_context.py`, `tests/test_ai_service.py`, `tests/test_ai_templates.py` |
+| M6 | Explain/Regenerate panel, audit entries, key-set/clear notices, fake-provider e2e | `tests/test_alert_explain.py`, `tests/e2e/test_ai_explain_e2e.py` |
+| M7 | Redacted preview, retention, offline demo, this evidence | `tests/test_ai_routes.py`, `tests/test_delivery.py`, `tests/test_behaviour_demo.py` |
+
+### Decisions
+
+| # | Call | Reason |
+|---|---|---|
+| D-041 | Behavioural analytics is **statistical**, not ML; calibration-first; detect-only | Reopens v1.1's "No ML" narrowly, keeps the Pi budget, stays explainable |
+| D-042 | AI explanations are opt-in, provider-agnostic, with a deterministic template fallback | The product must work offline and never depend on a vendor |
+| D-043 | API keys are Fernet-encrypted at rest and write-only in the UI | A security product must not leak its own credentials |
+| D-044 | The sensor process never calls an AI provider; only the unprivileged web process does | Preserves the privilege boundary and the key's blast radius |
+| D-045 | Only redacted metadata leaves the box; raw packets never do | Privacy is a product feature, not an afterthought |
+| D-046 | One active provider at a time, presets + free-text model | Keeps the UI and storage simple; covers the common providers |
+| D-047 | AI explanations appear in the UI only, not in notifications | Avoids cost, latency, and noise in the alert channel |
+| D-048 | A second EVE reader for behaviour, unless measurement says otherwise | Does not disturb the alert tailer's at-least-once semantics |
+
+### Acceptance numbers (committed fixtures, lab mode `calibration_days=0`)
+
+The 20-sample gate is still enforced; `calibration_days=0` only removes the calendar
+wait, exactly as a fresh install would after its seven-day warm-up.
+
+| Fixture | EVE lines | Behaviour events | Detail |
+|---|---|---|---|
+| `normal.eve.jsonl` (24 h, 5 devices) | 605 | **0** | zero medium-or-higher alerts; zero beaconing alerts (bar: ≤ 2 low) |
+| `attack.eve.jsonl` (1 h, seeded with the benign day) | 87 | **2** | `behaviour.volume_spike` medium, ratio **451.02×**; `behaviour.beaconing` low, 15 connections every 60.0 s; exactly one beaconing episode |
+
+Detection latency is at most one bucket plus grace: the attack fixture's
+`window_end - first_upload_ts` is ≤ 15 min 30 s (asserted). Unknown IPv6 peers are
+counted in `unknown_ip_flows` and shown in Health rather than guessed onto a device.
+
+### AI evaluation
+
+Ten representative incident contexts (ARP gateway change, ARP conflict, DNS
+untrusted resolver, rogue DHCP, port scan, SYN flood, new device, Suricata alert,
+volume spike, beaconing), rendered through the production redaction and template
+path. "Invented entities" counts MAC/IP tokens in the output that were not present
+in the event facts.
+
+| Path | Facts present | Invented entities | Actionable ("What to check") | Mean length | Median latency | Tokens |
+|---|---|---|---|---|---|---|
+| Template (deterministic, offline) | **10/10** | **0** | **10/10** | 592 chars | 0.003 ms | 0 |
+| Provider plumbing (loopback fake) | n/a — fixed fake text | 0 | n/a | 81 chars (fake) | 0.96 ms median, 1.88 ms max | 12 / 5 (synthetic, from the fake response) |
+
+The provider row measures the service, cache, redaction, and HTTP plumbing only; it
+is **not** a model-quality result. No real provider key was available in this
+environment, so factual accuracy, hallucination rate, and cost of a real model were
+not measured. The fake-provider e2e proves the opt-in path end to end, and the
+template is the guaranteed floor when AI is off, unkeyed, circuit-open, or failing.
+
+### Resource measurements (x86_64 dev machine, synthetic fixtures)
+
+| Measurement | Result |
+|---|---|
+| Aggregator throughput | 605 lines in 0.132 s wall / 0.131 s CPU → ~4,600 lines/s; attack 87 lines → ~10,600 lines/s |
+| Process RSS | 44.7 MiB before replay, 44.9 MiB after; peak 44.9 MiB including Python, imports, and SQLite; incremental replay footprint ~0.2 MiB |
+| DB rows per benign day | 480 `device_activity` (5 devices × 96 buckets), 6 `device_destinations`, 25 `device_baselines`, 0 events |
+| DB rows for the attack hour | +20 buckets, +2 destinations, +2 events |
+
+These are desktop numbers on a quiet host, not Pi 4 numbers; the Pi budget still
+needs a hardware run (`docs/BLOCKERS.md`). The engine's CPU cost is dominated by
+Suricata, not the aggregator.
+
+### Known limitations
+
+- **IPv6 attribution is excluded.** IPv6 flows are counted in `unknown_ip_flows` and
+  surfaced in Health and the report; they do not create device baselines.
+- **Long flows are bucketed at their end.** Suricata emits a flow record when the
+  flow closes, so a multi-hour transfer lands in the bucket where it ended.
+- **The current bucket is at-most-once across a crash.** Buckets are written as they
+  close; a crash can lose the in-flight bucket (at most 15 minutes), never duplicate
+  an alert.
+- **One provider at a time.** No multi-provider comparison and no agentic
+  investigator in this release.
+- **AI quality depends on the chosen provider/model.** The template fallback is
+  deterministic but deliberately generic; it is not a substitute for a model's
+  narrative.
+- **Seven-day calibration by default.** A new device is unbaselined for a week
+  (lab/demo mode can shorten it, but the 20-sample gate still applies).
+- **No hardware validation yet.** RSS/CPU on the Pi 4, real Suricata EVE volume, and
+  the inline-bridge behaviour remain Pi-side checks.
+
+### Evidence — the gate, run on the final tree
+
+```text
+$ uv sync --frozen              → Checked 47 packages in 0.56ms
+$ uv run ruff check .           → All checks passed!
+$ uv run ruff format --check .  → 127 files already formatted
+$ uv run pyright                → 0 errors, 0 warnings, 0 informations
+$ uv run pytest                 → 736 passed, 1 skipped, 14 deselected in 24.01s
+$ uv run pytest tests/e2e -m e2e --browser-channel chrome → 14 passed in 18.79s
+```
+
+The offline demo is the manual check for the detection path:
+
+```text
+$ uv run python scripts/demo/behaviour_demo.py \
+    --fixtures tests/fixtures/behaviour --data-dir /tmp/opencode/gilgamesh-demo
+2 behaviour event(s) in /tmp/opencode/gilgamesh-demo
+2026-11-10T00:26:59+00:00 behaviour.volume_spike       medium   Camera uploaded 451.02x its normal amount in the last 15 minutes.
+2026-11-10T00:26:59+00:00 behaviour.beaconing          low      Camera made 15 regular connections to 198.51.100.99 every 60.0s.
+```
+
+All v1.2 changes are **staged, not committed**; `main` is untouched at `3d2840b`.
+No network configuration, promiscuous mode, attack tool, or `sudo` was used.
+
 ## Notes
 
 - Web access confirmed 2026-10-14. Suricata **8.0.7** current stable (2026-09-15); 7.x EOL.

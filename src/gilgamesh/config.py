@@ -72,6 +72,12 @@ class Settings(BaseSettings):
         """Where the last successful rules update records its version."""
         return self.data_dir / "rules_version.txt"
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ai_key_path(self) -> Path:
+        """The Fernet key that encrypts the stored AI provider API key."""
+        return self.data_dir / "ai.key"
+
     @property
     def host_allowlist(self) -> list[str]:
         """``allowed_hosts`` split into a list; never empty."""

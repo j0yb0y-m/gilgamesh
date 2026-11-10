@@ -19,10 +19,12 @@ from pathlib import Path
 import pytest
 
 from gilgamesh.models import Event, EventType, Severity
+from gilgamesh.sensors import suricata_ingest
 from gilgamesh.sensors.suricata_ingest import (
     EveIngestor,
     RuleSetting,
     parse_eve_line,
+    parse_eve_record,
     read_eve_events,
     render_disable_conf,
     render_enable_conf,
@@ -159,6 +161,20 @@ def test_malformed_json_is_ignored(caplog: pytest.LogCaptureFixture) -> None:
 
 def test_alert_without_alert_object_is_ignored() -> None:
     assert parse_eve_line(json.dumps({"event_type": "alert"})) is None
+
+
+def test_parse_eve_record_parses_an_already_decoded_alert() -> None:
+    """The shared follower hands over decoded dicts; the alert logic must accept them."""
+    event = parse_eve_record(json.loads(alert_line(signature="decoded directly")))
+
+    assert event is not None
+    assert event.details["signature"] == "decoded directly"
+
+
+def test_stop_signal_is_re_exported_for_existing_imports() -> None:
+    from gilgamesh.sensors import eve_tail
+
+    assert suricata_ingest.StopSignal is eve_tail.StopSignal
 
 
 def test_read_events_skips_an_incomplete_trailing_line(tmp_path: Path) -> None:
@@ -301,9 +317,9 @@ def test_follow_waits_for_a_log_that_appears_later(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """At boot the sensor starts before Suricata; the tailer must not give up."""
-    from gilgamesh.sensors import suricata_ingest
+    from gilgamesh.sensors import eve_tail
 
-    monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(eve_tail, "FOLLOW_POLL_SECONDS", 0.02)
     path = tmp_path / "eve.json"
     stop = threading.Event()
     seen: list[Event] = []
@@ -327,9 +343,9 @@ def test_follow_yields_lines_appended_to_an_existing_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """On first open the tailer starts at the end: history is not replayed as new."""
-    from gilgamesh.sensors import suricata_ingest
+    from gilgamesh.sensors import eve_tail
 
-    monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(eve_tail, "FOLLOW_POLL_SECONDS", 0.02)
     path = tmp_path / "eve.json"
     path.write_text(alert_line(signature="history") + "\n")
     stop = threading.Event()
@@ -355,9 +371,9 @@ def test_follow_resumes_at_the_persisted_offset_after_a_restart(
 ) -> None:
     """A crash must replay at worst one line, never the entire historical log."""
     from gilgamesh.db import Database
-    from gilgamesh.sensors import suricata_ingest
+    from gilgamesh.sensors import eve_tail
 
-    monkeypatch.setattr(suricata_ingest, "FOLLOW_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(eve_tail, "FOLLOW_POLL_SECONDS", 0.02)
     path = tmp_path / "eve.json"
     path.write_text("")
     db = Database(tmp_path / "gilgamesh.db")

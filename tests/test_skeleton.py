@@ -90,7 +90,7 @@ def test_upgrading_a_version_2_database_adds_the_incidents_table(tmp_path: Path)
     db = Database(path)
     db.initialize()
 
-    assert db.query("SELECT version FROM schema_version")[0]["version"] == 3
+    assert db.query("SELECT version FROM schema_version")[0]["version"] == 4
     assert db.query("SELECT COUNT(*) AS n FROM incidents")[0]["n"] == 0
     db.close()
 

@@ -41,6 +41,7 @@ from gilgamesh.db import Database
 from gilgamesh.devices import DeviceStore
 from gilgamesh.models import Event
 from gilgamesh.pipeline import Pipeline, PipelineDecision, PipelineResult
+from gilgamesh.preferences import PreferencesStore
 from gilgamesh.rules import RuleConfigService
 from gilgamesh.sensors.base import PacketDetector
 from gilgamesh.sensors.capture import DEFAULT_BPF, PacketSource, make_source
@@ -477,6 +478,21 @@ def _start_suricata_tailer(
     return thread
 
 
+def _start_behaviour_service(
+    path: Path | None,
+    runner: SensorRunner,
+    stop: ThreadEvent,
+    database: Database,
+    device_store: DeviceStore,
+    preferences: PreferencesStore,
+    rules: RuleConfigService,
+) -> Thread | None:
+    """Start the behaviour aggregator thread, if Suricata's EVE log is configured."""
+    from gilgamesh.behaviour.service import start_behaviour_service
+
+    return start_behaviour_service(path, runner, stop, database, device_store, preferences, rules)
+
+
 def main() -> None:
     """Entry point for the ``gilgamesh-sensor`` service."""
     import signal
@@ -541,6 +557,15 @@ def main() -> None:
         signal.signal(sig, _handle_signal)
 
     tailer = _start_suricata_tailer(settings.suricata_eve_path, runner, stop, db)
+    behaviour = _start_behaviour_service(
+        settings.suricata_eve_path,
+        runner,
+        stop,
+        db,
+        device_store,
+        PreferencesStore(db),
+        rules,
+    )
     mode = "replay" if settings.pcap is not None else "live"
     logger.info("sensor started: %s capture from %s", mode, source_label)
 
@@ -550,6 +575,8 @@ def main() -> None:
             logger.info("replay finished: %d packets processed", processed)
     finally:
         stop.set()
+        if behaviour is not None:
+            behaviour.join(timeout=2.0)
         if tailer is not None:
             tailer.join(timeout=2.0)
         db.close()

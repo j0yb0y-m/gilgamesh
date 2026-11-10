@@ -22,6 +22,10 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from gilgamesh.ai.secrets import AiKeyStore
+from gilgamesh.ai.service import ExplanationService
+from gilgamesh.ai.settings import AiSettingsStore
+from gilgamesh.behaviour.store import BehaviourStore
 from gilgamesh.channels import ChannelStore
 from gilgamesh.config import Settings
 from gilgamesh.db import Database
@@ -47,6 +51,7 @@ from gilgamesh.web.routes import (
     health,
     notifications,
     rules,
+    settings_ai,
 )
 from gilgamesh.web.routes import (
     settings as settings_routes,
@@ -78,8 +83,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth = auth
         app.state.rules = RuleConfigService(database, default_catalogue())
         app.state.devices = DeviceStore(database)
+        app.state.behaviour = BehaviourStore(database)
         app.state.channels = ChannelStore(database)
         app.state.preferences = PreferencesStore(database)
+        app.state.ai_settings = AiSettingsStore(database)
+        app.state.ai_keys = AiKeyStore(database, resolved.ai_key_path)
+        # Tests inject an httpx.MockTransport here; production leaves it None so each
+        # provider builds its own client.
+        app.state.ai_transport = None
+        app.state.explanations = ExplanationService(
+            database,
+            app.state.ai_settings,
+            app.state.ai_keys,
+            transport=app.state.ai_transport,
+        )
         app.state.bus = EventBus()
         # Transport overrides for the notification channels, keyed by ChannelKind. Empty
         # in production (each channel builds its own HTTP transport); tests inject fakes.
@@ -162,6 +179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         notifications.router,
         health.router,
         settings_routes.router,
+        settings_ai.router,
     ):
         app.include_router(page_router)
 

@@ -90,3 +90,22 @@ def test_invalid_update_leaves_stored_state_untouched(store: PreferencesStore) -
 def test_preferences_model_rejects_out_of_range() -> None:
     with pytest.raises(ValidationError):
         Preferences(retention_days=0)
+
+
+def test_behaviour_defaults_are_enabled_with_seven_day_calibration(
+    store: PreferencesStore,
+) -> None:
+    prefs = store.get()
+
+    assert prefs.behaviour_enabled is True
+    assert prefs.behaviour_calibration_days == 7
+
+
+@pytest.mark.parametrize("bad", [-1, 31])
+def test_behaviour_calibration_is_bounded(store: PreferencesStore, bad: int) -> None:
+    with pytest.raises(PreferenceError):
+        store.update(behaviour_calibration_days=bad)
+
+
+def test_zero_calibration_is_allowed_for_lab_mode(store: PreferencesStore) -> None:
+    assert store.update(behaviour_calibration_days=0).behaviour_calibration_days == 0

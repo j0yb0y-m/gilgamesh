@@ -41,6 +41,8 @@ class Preferences(BaseModel):
     lan_interface: str = "eth1"
     wan_interface: str = "eth0"
     https_mode: str = "off"
+    behaviour_enabled: bool = True
+    behaviour_calibration_days: int = 7
 
     @field_validator("retention_days")
     @classmethod
@@ -68,6 +70,13 @@ class Preferences(BaseModel):
     def _valid_iface(cls, value: str) -> str:
         if not _IFACE.match(value):
             raise ValueError("interface names are 1-15 letters, digits, '.', '_' or '-'")
+        return value
+
+    @field_validator("behaviour_calibration_days")
+    @classmethod
+    def _bounded_calibration(cls, value: int) -> int:
+        if not 0 <= value <= 30:
+            raise ValueError("calibration must be between 0 and 30 days")
         return value
 
 

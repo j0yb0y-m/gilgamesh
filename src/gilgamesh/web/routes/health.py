@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -66,6 +66,7 @@ def _health_page(
         context={
             "session": session,
             "report": _report_for_template(report),
+            "behaviour": _behaviour_for_template(request, enabled=prefs.behaviour_enabled),
             "notice": notice,
             "error": error,
             "steps": steps,
@@ -90,6 +91,30 @@ def _sensor_packets_dropped(database: Database) -> int:
         return int(raw) if raw is not None else 0
     except ValueError:
         return 0
+
+
+def _behaviour_for_template(request: Request, *, enabled: bool) -> dict[str, object]:
+    """The behaviour engine's last published status, flattened for the tile."""
+    status = request.app.state.behaviour.read_status()
+    now = datetime.now(UTC)
+    stale = bool(
+        enabled
+        and status.suricata_available
+        and status.last_flow_ts is not None
+        and status.last_flow_ts < now - timedelta(minutes=5)
+    )
+    return {
+        "enabled": enabled,
+        "available": status.suricata_available,
+        "last_flow_ts": status.last_flow_ts,
+        "flows_seen": status.flows_seen,
+        "dns_seen": status.dns_seen,
+        "parse_errors": status.parse_errors,
+        "unknown_ip_flows": status.unknown_ip_flows,
+        "ipv6_flows": status.ipv6_flows,
+        "devices_tracked": status.devices_tracked,
+        "stale": stale,
+    }
 
 
 def _report_for_template(report: HealthReport) -> dict[str, object]:

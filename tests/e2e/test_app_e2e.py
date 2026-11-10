@@ -247,7 +247,7 @@ def test_saving_settings_persists_after_a_reload(page: Page, app_url: str) -> No
     retention = page.get_by_label("Keep alerts for (days)")
     expect(retention).to_have_value("30")
     retention.fill("14")
-    page.get_by_role("button", name="Save").click()
+    page.get_by_role("button", name="Save", exact=True).click()
 
     expect(page.get_by_role("status")).to_contain_text("Settings saved.")
     page.reload()

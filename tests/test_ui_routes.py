@@ -13,6 +13,7 @@ import contextlib
 import json
 import re
 from collections.abc import AsyncGenerator, Callable, Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -21,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp, Message
 
+from gilgamesh.behaviour.store import BehaviourStatus
 from gilgamesh.config import Settings
 from gilgamesh.db import Database
 from gilgamesh.models import Event, EventType, Severity
@@ -512,3 +514,108 @@ def test_sse_frame_is_valid_json(client: TestClient) -> None:
     parsed = json.loads(bus_published)
 
     assert parsed["summary"] == "s"
+
+
+# --- behaviour settings and the Health tile -----------------------------------
+
+
+def test_behaviour_settings_save_and_zero_day_warning(client: TestClient) -> None:
+    csrf = csrf_from(client, "/settings")
+
+    response = client.post(
+        "/settings/behaviour",
+        data={
+            "csrf_token": csrf,
+            "behaviour_enabled": "1",
+            "behaviour_calibration_days": "0",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    app = cast(FastAPI, client.app)
+    prefs = app.state.preferences.get()
+    assert prefs.behaviour_enabled is True
+    assert prefs.behaviour_calibration_days == 0
+    body = client.get("/settings").text
+    assert "calibration disabled" in body.lower()
+    entries = [row["action"] for row in app.state.db.audit_entries()]
+    assert any("behaviour" in action.lower() for action in entries)
+
+
+def test_behaviour_settings_can_disable_detection(client: TestClient) -> None:
+    csrf = csrf_from(client, "/settings")
+
+    response = client.post(
+        "/settings/behaviour",
+        data={"csrf_token": csrf, "behaviour_calibration_days": "7"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert cast(FastAPI, client.app).state.preferences.get().behaviour_enabled is False
+
+
+def test_behaviour_settings_reject_invalid_calibration(client: TestClient) -> None:
+    csrf = csrf_from(client, "/settings")
+
+    response = client.post(
+        "/settings/behaviour",
+        data={
+            "csrf_token": csrf,
+            "behaviour_enabled": "1",
+            "behaviour_calibration_days": "31",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Not saved" in response.text
+    assert cast(FastAPI, client.app).state.preferences.get().behaviour_calibration_days == 7
+
+
+def test_health_tile_shows_unknown_and_ipv6_flows(client: TestClient) -> None:
+    cast(FastAPI, client.app).state.behaviour.write_status(
+        BehaviourStatus(
+            suricata_available=True,
+            last_flow_ts=datetime.now(UTC),
+            flows_seen=120,
+            dns_seen=30,
+            parse_errors=2,
+            unknown_ip_flows=5,
+            ipv6_flows=3,
+            devices_tracked=4,
+        )
+    )
+
+    body = client.get("/health").text
+
+    assert "Behaviour ingest" in body
+    assert "IPv6" in body
+    assert "unknown" in body.lower()
+    assert "parse errors: 2" in body
+    assert "4 devices tracked" in body
+
+
+def test_health_tile_reports_unavailable_and_disabled(client: TestClient) -> None:
+    body = client.get("/health").text
+    assert "Suricata EVE not found" in body
+
+    cast(FastAPI, client.app).state.preferences.update(behaviour_enabled=False)
+
+    body = client.get("/health").text
+    assert "disabled" in body
+
+
+def test_health_tile_marks_stale_ingest(client: TestClient) -> None:
+    cast(FastAPI, client.app).state.behaviour.write_status(
+        BehaviourStatus(
+            suricata_available=True,
+            last_flow_ts=datetime.now(UTC) - timedelta(minutes=6),
+            flows_seen=1,
+        )
+    )
+
+    body = client.get("/health").text
+
+    assert "stale" in body.lower()
+    assert "more than five minutes" in body.lower()

@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}{{ device.hostname or device.mac }} — Gilgamesh{% endblock %}
+
+{% import "_icons.html" as icons %}
+
+{% macro bytesize(value) -%}
+  {%- set v = value | float -%}
+  {%- if v >= 1073741824 -%}
+    {{ "%.1f" | format(v / 1073741824) }} GiB
+  {%- elif v >= 1048576 -%}
+    {{ "%.1f" | format(v / 1048576) }} MiB
+  {%- elif v >= 1024 -%}
+    {{ "%.1f" | format(v / 1024) }} KiB
+  {%- else -%}
+    {{ v | round(0) | int }} B
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<section id="device-detail">
+  <p class="mb-3">
+    <a class="back-link" href="/devices">
+      {{ icons.icon("chevron-right") }} Back to devices
+    </a>
+  </p>
+
+  <div class="title-bar">
+    <div>
+      <h1 class="page-title">{{ device.hostname or device.mac }}</h1>
+      <p class="page-sub mono">{{ device.mac }}</p>
+      <p class="page-sub">
+        {% if device.vendor %}{{ device.vendor }} · {% endif %}
+        {% if device.ips %}{{ device.ips | join(", ") }}{% else %}No address seen{% endif %}
+        {% if device.randomised %} · <span class="pill pill-warn">randomised</span>{% endif %}
+      </p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      {% if device.trusted %}
+        <span class="pill pill-trusted">trusted</span>
+      {% else %}
+        <span class="pill pill-muted">untrusted</span>
+      {% endif %}
+      <form method="post" action="/devices/{{ device.mac }}/trust">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+        <input type="hidden" name="trusted" value="{% if device.trusted %}0{% else %}1{% endif %}" />
+        <button type="submit" class="btn btn-ghost btn-sm">
+          {% if device.trusted %}Untrust{% else %}Trust{% endif %}
+        </button>
+      </form>
+      <form method="post" action="/devices/{{ device.mac }}/rename" class="flex gap-1.5">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+        <input
+          type="text"
+          name="hostname"
+          value="{{ device.hostname or '' }}"
+          placeholder="name"
+          class="input mt-0 w-32 px-2 py-1 text-[11.5px]"
+        />
+        <button type="submit" class="btn btn-ghost btn-sm">{{ icons.icon("pencil") }}<span class="sr-only">Rename</span></button>
+      </form>
+    </div>
+  </div>
+
+  {% if notice %}
+    <p role="status" class="notice notice-ok mb-4">
+      {{ icons.icon("circle-check") }}
+      {{ notice }}
+    </p>
+  {% endif %}
+
+  <div class="card mb-5">
+    <div class="card-header">
+      <h2 class="card-title">Behaviour calibration</h2>
+      {% if profile.summary.state == "calibrated" %}
+        <span class="pill pill-trusted">calibrated</span>
+      {% elif profile.summary.state == "learning" %}
+        <span class="pill pill-warn">learning</span>
+      {% elif profile.summary.state == "disabled" %}
+        <span class="pill pill-muted">disabled</span>
+      {% else %}
+        <span class="pill pill-muted">no traffic</span>
+      {% endif %}
+    </div>
+    <div class="card-body text-[12.5px] text-slate-600">
+      {% if profile.summary.state == "disabled" %}
+        <p>
+          Behaviour detection is disabled. Enable it in
+          <a class="link" href="/settings">Settings</a> to start learning this device's
+          normal traffic.
+        </p>
+      {% elif profile.summary.state == "none" %}
+        <p>
+          No traffic has been aggregated for this device yet. The first 15-minute
+          bucket appears after the sensor sees its traffic.
+        </p>
+      {% elif profile.summary.state == "learning" %}
+        <p class="font-semibold text-slate-800">
+          learning ({{ profile.summary.days_learning }}/{{ profile.summary.calibration_days }} days)
+        </p>
+        <p class="mt-1">
+          {{ profile.summary.samples }} samples collected. Detection starts after
+          {{ profile.summary.calibration_days }} days and at least 20 samples.
+        </p>
+        {% if profile.summary.calibration_days == 0 %}
+          <p class="notice mt-3">
+            {{ icons.icon("triangle-alert") }}
+            Calibration is disabled (0 days). This is intended for demos and lab runs;
+            detection starts as soon as 20 samples exist.
+          </p>
+        {% endif %}
+      {% else %}
+        <p class="font-semibold text-slate-800">calibrated</p>
+        <p class="mt-1">
+          {{ profile.summary.samples }} samples collected. The baseline is being
+          compared with every new 15-minute bucket.
+        </p>
+      {% endif %}
+      {% if profile.summary.updated_ts %}
+        <p class="mt-2 text-[11px] text-slate-400">
+          Last baseline update:
+          <time datetime="{{ profile.summary.updated_ts.isoformat() }}">{{ profile.summary.updated_ts.isoformat(timespec="seconds") }}</time>
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-5">
+    <div class="card-header">
+      <h2 class="card-title">Bytes in and out</h2>
+      <span class="text-[11px] text-slate-500">last 24 hours · 15-minute buckets</span>
+    </div>
+    <div class="card-body">
+      {% if sparkline.out_points %}
+        <svg
+          viewBox="0 0 {{ sparkline.width }} {{ sparkline.height }}"
+          width="100%"
+          height="120"
+          role="img"
+          aria-labelledby="sparkline-title"
+          preserveAspectRatio="none"
+        >
+          <title id="sparkline-title">Bytes in and out for {{ device.hostname or device.mac }} over the last 24 hours</title>
+          <polyline points="{{ sparkline.in_points }}" fill="none" stroke="#7c3aed" stroke-width="1.5" />
+          <polyline points="{{ sparkline.out_points }}" fill="none" stroke="#0284c7" stroke-width="1.5" />
+        </svg>
+        <p class="mt-2 flex flex-wrap gap-4 text-[11px] text-slate-500">
+          <span class="inline-flex items-center gap-1">
+            <svg width="16" height="4" viewBox="0 0 16 4" aria-hidden="true"><line x1="0" y1="2" x2="16" y2="2" stroke="#0284c7" stroke-width="2" /></svg>
+            bytes out
+          </span>
+          <span class="inline-flex items-center gap-1">
+            <svg width="16" height="4" viewBox="0 0 16 4" aria-hidden="true"><line x1="0" y1="2" x2="16" y2="2" stroke="#7c3aed" stroke-width="2" /></svg>
+            bytes in
+          </span>
+          <span class="ml-auto">peak {{ bytesize(sparkline.max_bytes) }}</span>
+        </p>
+      {% else %}
+        <p class="text-[12.5px] text-slate-500">No traffic buckets in the last 24 hours.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-5">
+    <div class="card-header">
+      <h2 class="card-title">Normal vs last 24 hours</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="table w-full">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>Normal (per 15 min)</th>
+            <th>Last 24 hours</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set metrics = [
+            ("bytes_out_log", "Bytes out", true),
+            ("bytes_in_log", "Bytes in", true),
+            ("unique_dst", "Unique destinations", false),
+            ("new_destinations", "New destinations", false),
+            ("dns_queries", "DNS queries", false),
+          ] %}
+          {% for metric, label, is_bytes in metrics %}
+            {% set row = baselines.get(metric) %}
+            <tr>
+              <td>{{ label }}</td>
+              <td>
+                {% if row %}
+                  {% if is_bytes %}
+                    {{ bytesize(normal[metric]) }}
+                  {% else %}
+                    {{ "%.1f" | format(normal[metric]) }}
+                  {% endif %}
+                {% else %}
+                  <span class="text-slate-400">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if is_bytes %}
+                  {{ bytesize(observed[metric]) }}
+                {% elif metric == "new_destinations" %}
+                  {{ observed[metric] | int }} new
+                {% else %}
+                  {{ "%.1f" | format(observed[metric]) }}
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="card-body border-t border-slate-100 text-[11px] text-slate-500">
+      Bytes and counts are averaged per 15-minute bucket. New destinations are the
+      number of external hosts this device contacted for the first time in the window.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 class="card-title">Recent events</h2>
+      <a class="link text-[12.5px]" href="/alerts">All alerts</a>
+    </div>
+    {% if profile.recent_events %}
+      <div class="overflow-x-auto">
+        <table class="table w-full">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Severity</th>
+              <th>Event</th>
+              <th>Detector</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in profile.recent_events %}
+              <tr>
+                <td class="whitespace-nowrap text-slate-500">
+                  <time datetime="{{ event.ts.isoformat() }}">{{ event.ts.isoformat(timespec="seconds") }}</time>
+                </td>
+                <td><span class="badge badge-{{ event.severity }}">{{ event.severity }}</span></td>
+                <td><a class="link" href="/alerts/{{ event.id }}">{{ event.summary }}</a></td>
+                <td class="mono text-slate-500">{{ event.detector }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card-body text-[12.5px] text-slate-500">
+        No events for this device yet.
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

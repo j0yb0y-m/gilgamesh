@@ -11,6 +11,8 @@ accepts URL-encoded form bodies only, so the combined work stays cleanly GPL-2.0
 
 **Last verified:** 2026-10-14 · **Status of versions:** `V` = verified this phase, `P` = provisional (pin at add time).
 
+**v1.2 (2026-11-10):** adds no runtime dependency; `httpx` and `cryptography` are already recorded above.
+
 ## A. Gilgamesh's own dependencies (Python — added with `uv add`)
 
 | Component | Version | SPDX | Source URL | OSS |

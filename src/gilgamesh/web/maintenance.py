@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from gilgamesh.ai.cache import ExplanationCache
+from gilgamesh.behaviour.store import BehaviourStore
 from gilgamesh.db import Database
 from gilgamesh.preferences import PreferencesStore
 
@@ -32,6 +34,12 @@ AUDIT_RETENTION_SECONDS = 365 * 24 * 3600.0
 # A session idle for this long can only be an abandoned row (the auth timeouts are
 # measured in hours), so sweeping it is pure cleanup.
 STALE_SESSION_SECONDS = 30 * 24 * 3600.0
+
+# Behaviour aggregates answer "what changed this month"; thirty days is enough for
+# the device detail page and keeps the SD-card write load bounded.
+BEHAVIOUR_RETENTION_DAYS = 30
+# Explanations are read soon after the alert; three months of audit history is plenty.
+AI_EXPLANATION_RETENTION_DAYS = 90
 
 
 class MaintenanceTask:
@@ -55,12 +63,22 @@ class MaintenanceTask:
         now = self._clock()
         retention_days = self._preferences.get().retention_days
         cutoff = datetime.fromtimestamp(now - retention_days * 86_400.0, UTC).isoformat()
+        behaviour_cutoff = datetime.fromtimestamp(
+            now - BEHAVIOUR_RETENTION_DAYS * 86_400.0, UTC
+        ).isoformat()
+        explanation_cutoff = datetime.fromtimestamp(
+            now - AI_EXPLANATION_RETENTION_DAYS * 86_400.0, UTC
+        )
+        behaviour = BehaviourStore(self._db)
         removed = {
             "events": self._db.prune_events(cutoff, delivered_rowid=delivered_rowid),
             "incidents": self._db.prune_incidents(cutoff),
             "login_attempts": self._db.prune_login_attempts(now - LOGIN_ATTEMPT_RETENTION_SECONDS),
             "audit_log": self._db.prune_audit_log(now - AUDIT_RETENTION_SECONDS),
             "sessions": self._db.prune_expired_sessions(now - STALE_SESSION_SECONDS),
+            "device_activity": behaviour.prune_activity(behaviour_cutoff),
+            "device_destinations": behaviour.prune_destinations(behaviour_cutoff),
+            "ai_explanations": ExplanationCache(self._db).prune(explanation_cutoff),
         }
         if any(removed.values()):
             logger.info("maintenance pruned %s", removed)
@@ -88,7 +106,9 @@ class MaintenanceTask:
 
 
 __all__ = [
+    "AI_EXPLANATION_RETENTION_DAYS",
     "AUDIT_RETENTION_SECONDS",
+    "BEHAVIOUR_RETENTION_DAYS",
     "LOGIN_ATTEMPT_RETENTION_SECONDS",
     "STALE_SESSION_SECONDS",
     "SWEEP_SECONDS",

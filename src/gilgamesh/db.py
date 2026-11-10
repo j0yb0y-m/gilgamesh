@@ -27,7 +27,7 @@ from typing import Any
 
 from gilgamesh.models import Event, EventType, Severity
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -142,6 +142,68 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Behaviour analytics store 15-minute aggregates, never per-flow rows, so SD-card
+-- writes stay bounded. One row per device per bucket.
+CREATE TABLE IF NOT EXISTS device_activity (
+    device_mac       TEXT NOT NULL,
+    bucket_ts        TEXT NOT NULL,
+    bytes_in         INTEGER NOT NULL,
+    bytes_out        INTEGER NOT NULL,
+    packets_in       INTEGER NOT NULL,
+    packets_out      INTEGER NOT NULL,
+    flows            INTEGER NOT NULL,
+    unique_dst       INTEGER NOT NULL,
+    dns_queries      INTEGER NOT NULL,
+    dns_unique_names INTEGER NOT NULL,
+    PRIMARY KEY (device_mac, bucket_ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_activity_bucket ON device_activity(bucket_ts);
+
+-- EWMA mean/variance per device and metric. Kept while the device exists.
+CREATE TABLE IF NOT EXISTS device_baselines (
+    device_mac          TEXT NOT NULL,
+    metric              TEXT NOT NULL,
+    mean                REAL NOT NULL,
+    variance            REAL NOT NULL,
+    samples             INTEGER NOT NULL,
+    learning_started_ts TEXT NOT NULL,
+    updated_ts          TEXT NOT NULL,
+    PRIMARY KEY (device_mac, metric)
+);
+
+-- Bounded per device: least-recently-seen rows are pruned, so a device that talks
+-- to the whole internet cannot grow the table without limit.
+CREATE TABLE IF NOT EXISTS device_destinations (
+    device_mac    TEXT NOT NULL,
+    dst_ip        TEXT NOT NULL,
+    first_seen_ts TEXT NOT NULL,
+    last_seen_ts  TEXT NOT NULL,
+    PRIMARY KEY (device_mac, dst_ip)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_destinations_last_seen
+    ON device_destinations(last_seen_ts);
+
+-- An autoincrement id, not a composite primary key, so a failed attempt is audited
+-- without overwriting the cached successful explanation.
+CREATE TABLE IF NOT EXISTS ai_explanations (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id          TEXT NOT NULL,
+    provider          TEXT NOT NULL,
+    model             TEXT NOT NULL,
+    prompt_version    TEXT NOT NULL,
+    status            TEXT NOT NULL,
+    text              TEXT NOT NULL,
+    latency_ms        INTEGER,
+    prompt_tokens     INTEGER,
+    completion_tokens INTEGER,
+    created_ts        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_explanations_lookup
+    ON ai_explanations(event_id, provider, model, prompt_version, status, id DESC);
 """
 
 
@@ -285,6 +347,19 @@ class Database:
                 "FROM events e LEFT JOIN incidents i ON i.id = e.incident_id "
                 "ORDER BY e.ts DESC, e.rowid DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+        return [_row_to_event(row) for row in rows]
+
+    def events_for_device(self, mac: str, *, limit: int = 20) -> list[Event]:
+        """Events where ``mac`` is the source or destination, newest first."""
+        conn = self._connect()
+        with self._lock:
+            rows = conn.execute(
+                "SELECT e.*, COALESCE(i.count, 1) AS incident_count "
+                "FROM events e LEFT JOIN incidents i ON i.id = e.incident_id "
+                "WHERE e.src_mac = ? OR e.dst_mac = ? "
+                "ORDER BY e.ts DESC, e.rowid DESC LIMIT ?",
+                (mac, mac, limit),
             ).fetchall()
         return [_row_to_event(row) for row in rows]
 

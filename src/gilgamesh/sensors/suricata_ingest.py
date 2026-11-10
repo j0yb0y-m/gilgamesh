@@ -51,32 +51,23 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Protocol, cast
+from typing import cast
 
 from gilgamesh.db import Database
 from gilgamesh.models import Event, EventType, Severity
 from gilgamesh.pipeline import Pipeline, PipelineDecision
+from gilgamesh.sensors.eve_tail import StopSignal, follow_json_lines
 
 logger = logging.getLogger(__name__)
 
-#: How long the tailer waits before retrying an exhausted read. Half a second keeps
-#: alert latency low without spinning a core on the Pi.
-FOLLOW_POLL_SECONDS = 0.5
-
 #: ``app_settings`` prefix for the last safely-consumed position in an EVE file. One row
 #: per path so a deployment that points the sensor at a different log starts clean.
+#: Behaviour uses its own prefix so the two readers never move each other's position.
 POSITION_KEY_PREFIX = "suricata_eve_position:"
-
-
-class StopSignal(Protocol):
-    """The part of :class:`threading.Event` the tailer needs."""
-
-    def is_set(self) -> bool: ...
 
 
 #: Suricata's 1-4 alert severity mapped onto Gilgamesh's scale. See the module
@@ -157,116 +148,24 @@ class EveIngestor:
     def follow(self, path: Path, stop: StopSignal | None = None) -> Iterator[Event]:
         """Yield alerts as Suricata appends them to ``path``.
 
-        ``stop`` is any object with an ``is_set()`` method; passing ``None`` follows
-        forever. Intended to be called with ``threading.Event`` from the sensor service.
+        The durable mechanics — start at the end on first open, resume a persisted
+        inode/offset, wait for a missing file, rewind a partial line, reopen at byte
+        zero after rotation, and save the position only after the consumer takes the
+        record — live in :func:`~gilgamesh.sensors.eve_tail.follow_json_lines`. This
+        method only interprets each record as an alert.
 
-        **History is not news.** On the first open the tailer starts at the end of the
-        file, so a month-old alert is not re-sent to Discord/Telegram/email every time
-        the sensor restarts. When a database is available the inode and byte offset are
-        persisted after each yielded alert; a crash therefore replays at most the one
-        alert that was being delivered, which is the safe direction.
-
-        At end-of-file the loop *sleeps* and retries, and re-opens the file at byte zero
-        when its inode changes — Suricata rotates ``eve.json`` by renaming, and the new
-        file is new data, not history.
-
-        A missing file is waited for rather than treated as an error: at boot the sensor
-        normally starts before Suricata has created its log, and giving up there would
-        silently disable Suricata ingestion until the next restart.
+        The position key stays alert-specific (``suricata_eve_position:``), so another
+        reader can follow the same file under its own key without moving this one.
         """
-        handle = None
-        inode = -1
-        offset = 0
-        first_open = True
-        waited_for_file = False
-        try:
-            while True:
-                if stop is not None and stop.is_set():
-                    return
-                if handle is None:
-                    try:
-                        if first_open and not waited_for_file:
-                            handle, inode, offset = self._open_initial(path)
-                            first_open = False
-                        else:
-                            # A file that appeared after the sensor started, or a
-                            # rotated file, contains new data: read it from byte zero.
-                            handle, inode = _open_from_start(path)
-                            first_open = False
-                            offset = 0
-                            self._save_position(path, inode, offset)
-                    except OSError:
-                        waited_for_file = True
-                        time.sleep(FOLLOW_POLL_SECONDS)
-                        continue
-
-                line = handle.readline()
-                if not line:
-                    time.sleep(FOLLOW_POLL_SECONDS)
-                    try:
-                        current = path.stat()
-                    except OSError:
-                        continue
-                    if current.st_ino != inode:
-                        handle.close()
-                        handle = None
-                    continue
-                if not line.endswith("\n"):
-                    # A record still being written. Rewind and read it again whole.
-                    handle.seek(offset)
-                    time.sleep(FOLLOW_POLL_SECONDS)
-                    continue
-
-                offset = handle.tell()
-                event = self.parse_line(line)
-                if event is not None:
-                    yield event
-                    # Persist only after the consumer has taken the event: a crash
-                    # between the two replays it (at-least-once), never loses it.
-                    self._save_position(path, inode, offset)
-        finally:
-            if handle is not None:
-                handle.close()
-
-    def _open_initial(self, path: Path) -> tuple[IO[str], int, int]:
-        """Open for the first time, resuming a persisted position or seeking to the end."""
-        stored = self._load_position(path)
-        if stored is None:
-            return _open_at_end(path)
-        inode, offset = stored
-        try:
-            size = path.stat().st_size
-            if path.stat().st_ino == inode and 0 <= offset <= size:
-                handle = path.open(encoding="utf-8", errors="replace")
-                handle.seek(offset)
-                return handle, inode, offset
-        except OSError:
-            pass
-        return _open_at_end(path)
-
-    def _load_position(self, path: Path) -> tuple[int, int] | None:
-        if self._database is None:
-            return None
-        raw = self._database.get_setting(f"{POSITION_KEY_PREFIX}{path}")
-        if raw is None:
-            return None
-        try:
-            parsed = json.loads(raw)
-            return int(parsed["inode"]), int(parsed["offset"])
-        except (ValueError, TypeError, KeyError):
-            return None
-
-    def _save_position(self, path: Path, inode: int, offset: int) -> None:
-        if self._database is None:
-            return
-        try:
-            self._database.set_setting(
-                f"{POSITION_KEY_PREFIX}{path}",
-                json.dumps({"inode": inode, "offset": offset}, separators=(",", ":")),
-            )
-        except Exception:
-            # A counter that cannot be persisted is not a reason to stop ingesting.
-            logger.exception("could not persist the Suricata log position")
+        for record in follow_json_lines(
+            path,
+            database=self._database,
+            position_key=f"{POSITION_KEY_PREFIX}{path}",
+            stop=stop,
+        ):
+            event = parse_eve_record(record, severity_map=self._severity_map)
+            if event is not None:
+                yield event
 
     def _submit(self, event: Event) -> bool:
         if self._pipeline.submit(event).decision is not PipelineDecision.STORE:
@@ -283,7 +182,6 @@ def parse_eve_line(line: str, severity_map: Mapping[int, Severity] | None = None
     every record type other than ``alert``. A tailer runs unattended, so a single bad
     line must not stop the sensor.
     """
-    mapping = severity_map or DEFAULT_SEVERITY_MAP
     stripped = line.strip()
     if not stripped:
         return None
@@ -294,7 +192,19 @@ def parse_eve_line(line: str, severity_map: Mapping[int, Severity] | None = None
         return None
     if not isinstance(parsed, dict):
         return None
-    record = cast("dict[str, object]", parsed)
+    return parse_eve_record(cast("dict[str, object]", parsed), severity_map=severity_map)
+
+
+def parse_eve_record(
+    record: Mapping[str, object], severity_map: Mapping[int, Severity] | None = None
+) -> Event | None:
+    """Turn one decoded EVE record into an :class:`Event`, or return ``None``.
+
+    Only ``alert`` records become events. ``flow``, ``dns`` and the rest are facts for
+    other readers, not verdicts, and are ignored here. An alert without an integer
+    ``signature_id`` cannot be attributed to a rule and is skipped with a warning.
+    """
+    mapping = severity_map or DEFAULT_SEVERITY_MAP
     if record.get("event_type") != "alert":
         return None
 
@@ -402,20 +312,6 @@ def suricatasc_reload_command(unix_socket: Path | None = None) -> list[str]:
         command += ["--unix-socket", str(unix_socket)]
     command += ["-c", "reload-rules"]
     return command
-
-
-def _open_at_end(path: Path) -> tuple[IO[str], int, int]:
-    """Open an existing file for following from its current end."""
-    handle = path.open(encoding="utf-8", errors="replace")
-    size = path.stat().st_size
-    handle.seek(size)
-    return handle, path.stat().st_ino, size
-
-
-def _open_from_start(path: Path) -> tuple[IO[str], int]:
-    """Open a newly-created (rotated) file at byte zero."""
-    handle = path.open(encoding="utf-8", errors="replace")
-    return handle, path.stat().st_ino
 
 
 def _parse_timestamp(value: object) -> datetime:

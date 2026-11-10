@@ -390,6 +390,92 @@ def default_catalogue() -> RuleCatalogue:
                     ),
                 ),
             ),
+            RuleDefinition(
+                id="behaviour.volume_spike",
+                name="Volume spike",
+                description="A device sent or received far more data than its own normal.",
+                detector="behaviour",
+                params=(
+                    ParamSpec(
+                        name="z_threshold",
+                        kind="float",
+                        default=5.0,
+                        minimum=3.0,
+                        maximum=20.0,
+                        label="Z-score",
+                        help="Standard deviations above the device's own baseline.",
+                    ),
+                    ParamSpec(
+                        name="min_bytes",
+                        kind="int",
+                        default=10_000_000,
+                        minimum=1_000_000,
+                        maximum=1_000_000_000,
+                        label="Minimum bytes",
+                        help="Absolute floor so tiny devices do not alert on small bursts.",
+                    ),
+                    ParamSpec(
+                        name="min_ratio",
+                        kind="float",
+                        default=10.0,
+                        minimum=2.0,
+                        maximum=1000.0,
+                        label="Minimum ratio",
+                        help="Observed bytes divided by the device's normal amount.",
+                    ),
+                ),
+            ),
+            RuleDefinition(
+                id="behaviour.new_destinations",
+                name="New destinations",
+                description="A device contacted an unusual number of new external hosts.",
+                detector="behaviour",
+                params=(
+                    ParamSpec(
+                        name="min_new",
+                        kind="int",
+                        default=8,
+                        minimum=3,
+                        maximum=100,
+                        label="Minimum new hosts",
+                        help="Absolute floor when the device's own baseline is quiet.",
+                    ),
+                ),
+            ),
+            RuleDefinition(
+                id="behaviour.beaconing",
+                name="Beaconing",
+                description="Small, regularly spaced connections to one external endpoint.",
+                detector="behaviour",
+                params=(
+                    ParamSpec(
+                        name="min_connections",
+                        kind="int",
+                        default=8,
+                        minimum=8,
+                        maximum=100,
+                        label="Minimum connections",
+                    ),
+                    ParamSpec(
+                        name="max_cov",
+                        kind="float",
+                        default=0.15,
+                        minimum=0.01,
+                        maximum=0.5,
+                        label="Maximum variation",
+                        help="Coefficient of variation of the inter-arrival times.",
+                    ),
+                    ParamSpec(
+                        name="max_bytes",
+                        kind="int",
+                        default=1_000_000,
+                        minimum=1_000,
+                        maximum=10_000_000,
+                        label="Maximum bytes",
+                        help="Beacons are small; large transfers are not beaconing.",
+                    ),
+                ),
+            ),
         ]
     )
 
@@ -495,6 +581,9 @@ _RULE_TYPES: dict[str, EventType] = {
     "scan.syn_flood": EventType.SYN_FLOOD,
     "inventory.new_device": EventType.NEW_DEVICE,
     "suricata.alerts": EventType.SURICATA_ALERT,
+    "behaviour.volume_spike": EventType.BEHAVIOUR_ANOMALY,
+    "behaviour.new_destinations": EventType.BEHAVIOUR_ANOMALY,
+    "behaviour.beaconing": EventType.BEHAVIOUR_ANOMALY,
 }
 
 #: Which rule produced an event, keyed by the ``details["reason"]`` the detectors set.
@@ -514,6 +603,9 @@ _REASON_RULES: dict[str, str] = {
     "response_without_matching_query": "dns.spoofing",
     "untrusted_resolver": "dns.spoofing",
     "conflicting_answers": "dns.spoofing",
+    "volume_spike": "behaviour.volume_spike",
+    "new_destinations": "behaviour.new_destinations",
+    "beaconing": "behaviour.beaconing",
 }
 
 

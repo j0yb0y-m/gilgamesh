@@ -43,17 +43,19 @@
             <th>Addresses</th>
             <th>Last seen</th>
             <th>Status</th>
+            <th>Behaviour</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for device in devices %}
+            {% set summary = summaries.get(device.mac) %}
             <tr>
               <td>
                 {% if device.hostname %}
                   <span class="font-semibold text-slate-900">{{ device.hostname }}</span><br />
                 {% endif %}
-                <span class="mono text-slate-500">{{ device.mac }}</span>
+                <a class="mono text-slate-500 hover:text-slate-900" href="/devices/{{ device.mac }}">{{ device.mac }}</a>
                 {% if device.randomised %}
                   <span class="pill pill-warn ml-1">randomised</span>
                 {% endif %}
@@ -69,6 +71,23 @@
                   <span class="pill pill-trusted">trusted</span>
                 {% else %}
                   <span class="text-[11px] text-slate-500">unknown</span>
+                {% endif %}
+              </td>
+              <td class="whitespace-nowrap">
+                {% if not behaviour_enabled %}
+                  <span class="text-[11px] text-slate-500">disabled</span>
+                {% elif summary is none %}
+                  <span class="text-slate-400">—</span>
+                {% elif summary.state == "learning" %}
+                  {% if summary.calibration_days %}
+                    <span class="pill pill-warn">learning ({{ summary.days_learning }}/{{ summary.calibration_days }} days)</span>
+                  {% else %}
+                    <span class="pill pill-warn">learning (calibration disabled)</span>
+                  {% endif %}
+                {% elif summary.state == "calibrated" %}
+                  <span class="pill pill-trusted">calibrated</span>
+                {% else %}
+                  <span class="text-[11px] text-slate-500">{{ summary.state }}</span>
                 {% endif %}
               </td>
               <td>

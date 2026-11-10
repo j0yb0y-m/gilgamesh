@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from gilgamesh.ai.cache import ExplanationCache, ExplanationRow
+from gilgamesh.behaviour.store import ActivityBucket, BehaviourStore
 from gilgamesh.channels import ChannelStore
 from gilgamesh.db import Database
 from gilgamesh.models import Event, EventType, Severity
@@ -313,3 +315,47 @@ def test_delivery_cursor_is_durable(db: Database) -> None:
     asyncio.run(service.poll_once())
 
     assert db.get_setting(CURSOR_KEY) == str(service.cursor)
+
+
+def test_maintenance_prunes_old_behaviour_and_ai_rows(db: Database) -> None:
+    """Behaviour aggregates and explanations age out on their own clocks."""
+    now = 1_700_000_000.0
+    old = datetime.fromtimestamp(now - 100 * 86_400.0, UTC)
+    fresh = datetime.fromtimestamp(now - 2 * 86_400.0, UTC)
+    mac = "aa:bb:cc:dd:ee:01"
+    store = BehaviourStore(db)
+    store.write_bucket(ActivityBucket(device_mac=mac, bucket_ts=old, bytes_out=1))
+    store.write_bucket(ActivityBucket(device_mac=mac, bucket_ts=fresh, bytes_out=2))
+    store.record_destinations(mac, {"10.0.0.1"}, seen_ts=old)
+    store.record_destinations(mac, {"10.0.0.2"}, seen_ts=fresh)
+    cache = ExplanationCache(db)
+    cache.put(explanation_row("old-ok", "ok", old))
+    cache.put(explanation_row("old-error", "error", old))
+    cache.put(explanation_row("fresh-ok", "ok", fresh))
+
+    task = MaintenanceTask(db, PreferencesStore(db), clock=lambda: now)
+    removed = task.run_once()
+
+    assert removed["device_activity"] == 1
+    assert removed["device_destinations"] == 1
+    assert removed["ai_explanations"] == 2
+    kept = store.buckets(mac, since=datetime.fromtimestamp(now - 10 * 86_400.0, UTC))
+    assert [bucket.bucket_ts for bucket in kept] == [fresh]
+    assert store.seen_destinations(mac, {"10.0.0.1", "10.0.0.2"}) == {"10.0.0.2"}
+    assert cache.get("fresh-ok", "openai", "gpt-test", "behaviour-ai-v1") is not None
+
+
+def explanation_row(event_id: str, status: str, created: datetime) -> ExplanationRow:
+    return ExplanationRow(
+        id=None,
+        event_id=event_id,
+        provider="openai",
+        model="gpt-test",
+        prompt_version="behaviour-ai-v1",
+        status=status,
+        text="text" if status == "ok" else "",
+        latency_ms=5,
+        prompt_tokens=1,
+        completion_tokens=1,
+        created_ts=created,
+    )

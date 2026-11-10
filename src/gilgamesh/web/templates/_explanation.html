@@ -1,0 +1,30 @@
+<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">Explanation</h2>
+    {% if outcome.source == "ai" %}
+      <span class="badge badge-low">AI-generated</span>
+    {% else %}
+      <span class="badge badge-info">Standard explanation</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if outcome.reason %}
+      <p class="page-sub mb-2">{{ outcome.reason }}</p>
+    {% endif %}
+    <div class="explanation-text">{{ outcome.text }}</div>
+    {% if outcome.source == "ai" %}
+      <p class="page-sub mt-3">{{ outcome.disclaimer }}</p>
+    {% endif %}
+    <form
+      class="mt-3"
+      method="post"
+      action="/alerts/{{ event.id }}/explain/regenerate"
+      hx-post="/alerts/{{ event.id }}/explain/regenerate"
+      hx-target="#explanation"
+      hx-swap="innerHTML"
+    >
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+      <button type="submit" class="btn btn-ghost btn-sm">Regenerate</button>
+    </form>
+  </div>
+</div>

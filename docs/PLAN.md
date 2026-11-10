@@ -359,7 +359,34 @@ journald's own caps already bound — a logrotate file would have had nothing to
 - **Mode B (SPAN):** only whatever the switch mirrors; no ARP from ports not mirrored.
 - **Both:** encrypted payloads are opaque (signature coverage degrades on TLS 1.3); IPv6 features beyond basic NDP are not covered in v1.
 
-**Future work:** IPv6 rogue-RA/NDP spoofing; MAC-flood/CAM-overflow; ICMP-redirect abuse; DNS-tunnelling heuristics; beaconing detection; router mode (NAT/DHCP) — explicitly out of scope; TrueNAS/HA options.
+**Future work:** IPv6 rogue-RA/NDP spoofing; MAC-flood/CAM-overflow; ICMP-redirect abuse; DNS-tunnelling heuristics; beaconing detection (shipped in v1.2 as a behavioural signal); router mode (NAT/DHCP) — explicitly out of scope; TrueNAS/HA options.
+
+---
+
+## 14. v1.2 — Behavioural analytics + optional AI explanations
+
+v1.2 adds always-on local behavioural analytics (statistical, calibration-first,
+detect-only) and optional, provider-agnostic AI explanations on the alert detail
+page. It builds on the v1 schema (schema 4) and adds no runtime dependency. Full
+design and task plan:
+
+- `docs/superpowers/specs/2026-11-01-gilgamesh-v1-2-behaviour-ai-design.md`
+- `docs/superpowers/plans/2026-11-01-gilgamesh-v1-2-behaviour-ai.md`
+
+| # | Deliverable | Acceptance |
+|---|---|---|
+| M1 | EVE flow/DNS tailer, device attribution, 15-minute activity buckets | Synthetic EVE lines produce correct buckets; unknown IPs counted; rotation and restart handled |
+| M2 | Baselines, three signals, calibration, anomaly events | Each signal fires on synthetic data; benign fixture produces zero medium+ alerts; sustained anomaly = one event per hour with `consecutive_buckets` |
+| M3 | Device detail page, calibration UI, Health tile | Page renders profile and sparkline; e2e passes |
+| M4 | AI settings, encrypted key, provider presets, Test connection | Key never rendered/logged; mock provider succeeds; URL validation tests pass |
+| M5 | Explanation service, prompt, redaction, cache, template fallback | Disabled/timeout/error all return the template; cache hit avoids a second call; redaction tests pass |
+| M6 | Alert detail Explain panel, audit, e2e | Button works with AI on and off; output autoescaped; fake-provider e2e passes |
+| M7 | Docs, evaluation, demo script | Numbers recorded in `docs/PROGRESS.md`; offline demo works |
+
+Acceptance numbers and resource measurements are in the v1.2 section of
+`docs/PROGRESS.md`. Known limitations: IPv6 attribution excluded (counted as
+`unknown_ip_flows`), long flows bucketed at their end, the in-flight bucket is
+at-most-once across a crash, one provider at a time, and no agentic investigator.
 
 ---
 

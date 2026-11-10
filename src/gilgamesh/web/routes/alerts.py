@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from gilgamesh.ai.service import ExplanationService
 from gilgamesh.db import Database
 from gilgamesh.models import EventType, Severity
 from gilgamesh.web.auth import Session
@@ -97,3 +98,48 @@ async def alert_false_positive(
         entry = f"{entry}: {note}"
     database.insert_audit_entry(entry)
     return RedirectResponse(f"/alerts/{event_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/alerts/{event_id}/explain", dependencies=[Depends(verify_csrf)])
+async def alert_explain(
+    request: Request,
+    event_id: str,
+    session: Annotated[Session, Depends(require_session)],
+) -> Response:
+    """Explain one alert with the provider when enabled, or the template."""
+    return await _explain(request, event_id, session, regenerate=False)
+
+
+@router.post("/alerts/{event_id}/explain/regenerate", dependencies=[Depends(verify_csrf)])
+async def alert_explain_regenerate(
+    request: Request,
+    event_id: str,
+    session: Annotated[Session, Depends(require_session)],
+) -> Response:
+    """Force a fresh provider call, replacing the cached explanation."""
+    return await _explain(request, event_id, session, regenerate=True)
+
+
+async def _explain(
+    request: Request,
+    event_id: str,
+    session: Session,
+    *,
+    regenerate: bool,
+) -> Response:
+    """Shared body of the Explain and Regenerate routes.
+
+    Both return only the partial, so htmx can swap it into ``#explanation``
+    without reloading the evidence above it.
+    """
+    database: Database = request.app.state.db
+    event = database.get_event(event_id)
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such alert")
+    service: ExplanationService = request.app.state.explanations
+    outcome = await service.explain(event, regenerate=regenerate)
+    return templates.TemplateResponse(
+        request=request,
+        name="_explanation.html",
+        context={"session": session, "event": event, "outcome": outcome},
+    )

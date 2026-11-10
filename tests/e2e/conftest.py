@@ -25,7 +25,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -81,18 +82,27 @@ def server(server_log: Path) -> Iterator[RunningServer]:
     A test may stop this process deliberately — the graceful-shutdown test does, and it
     must therefore run last. The teardown below is written to survive that.
     """
+    with running_server(server_log.parent, server_log) as running:
+        yield running
+
+
+@contextmanager
+def running_server(data_dir: Path, log_path: Path) -> Generator[RunningServer]:
+    """Run the real server against ``data_dir`` and stop it on exit.
+
+    Factored out of the session fixture so an end-to-end file that needs its own
+    clean database can start an isolated server without disturbing the shared one.
+    """
     script = Path(sys.prefix) / "bin" / "gilgamesh-web"
     if not script.exists():  # pragma: no cover - only on a broken checkout
         raise RuntimeError("console script gilgamesh-web is missing; run `uv sync` first")
 
     port = _free_port()
-    data_dir = server_log.parent
     env = os.environ | {
         "GILGAMESH_DATA_DIR": str(data_dir),
         "GILGAMESH_HOST": "127.0.0.1",
         "GILGAMESH_PORT": str(port),
     }
-    log_path = server_log
     with log_path.open("w") as log:
         process = subprocess.Popen(
             [str(script)],

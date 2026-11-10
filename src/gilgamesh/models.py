@@ -31,6 +31,7 @@ class EventType(StrEnum):
     SYN_FLOOD = "syn_flood"
     NEW_DEVICE = "new_device"
     SURICATA_ALERT = "suricata_alert"
+    BEHAVIOUR_ANOMALY = "behaviour_anomaly"
 
 
 class Severity(StrEnum):

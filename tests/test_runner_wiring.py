@@ -444,12 +444,15 @@ def test_main_tails_suricata_and_exits_cleanly(
     try:
         events = database.list_events()
         device_macs = [record.mac for record in DeviceStore(database).list()]
+        behaviour_status = database.get_setting("behaviour_status")
     finally:
         database.close()
     assert [event.detector for event in events] == ["suricata"]
     assert events[0].details["signature"] == "ET SCAN Potential SSH Scan"
     # Detection of the packet source also happened: the seen device was mirrored.
     assert device_macs == [GATEWAY_MAC]
+    # The behaviour service was wired in and published its final status on shutdown.
+    assert behaviour_status is not None
 
 
 def test_main_refuses_to_run_without_a_capture_source(

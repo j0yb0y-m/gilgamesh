@@ -100,6 +100,48 @@
         {% else %}0{% endif %}
       </p>
     </div>
+
+    <div class="tile">
+      <div class="flex items-center justify-between">
+        <h2 class="tile-label">Behaviour ingest</h2>
+        <span class="tile-icon blue">{{ icons.icon("activity") }}</span>
+      </div>
+      {% if not behaviour.enabled %}
+        <p class="mt-1 text-[15px] font-semibold text-slate-500">disabled</p>
+        <p class="tile-caption">
+          Enable it in Settings to learn each device's normal traffic.
+        </p>
+      {% elif not behaviour.available %}
+        <p class="mt-1 text-[15px] font-semibold text-slate-500">Suricata EVE not found</p>
+        <p class="tile-caption">
+          The behaviour tailer is idle until Suricata writes its EVE log.
+        </p>
+      {% elif behaviour.stale %}
+        <p class="mt-1 text-[15px] font-semibold text-amber-700">stale</p>
+        <p class="tile-caption">
+          Last flow:
+          <time datetime="{{ behaviour.last_flow_ts.isoformat() }}">{{ behaviour.last_flow_ts.isoformat(timespec="seconds") }}</time>
+          — more than five minutes ago.
+        </p>
+      {% else %}
+        <p class="mt-1 text-[15px] font-semibold text-slate-900">
+          live
+          {% if behaviour.last_flow_ts %}
+            · last flow {{ behaviour.last_flow_ts.isoformat(timespec="seconds") }}
+          {% else %}
+            · waiting for the first flow
+          {% endif %}
+        </p>
+      {% endif %}
+      <p class="tile-caption">
+        {{ behaviour.flows_seen }} flows · {{ behaviour.dns_seen }} DNS records ·
+        {{ behaviour.devices_tracked }} devices tracked
+      </p>
+      <p class="tile-caption">
+        parse errors: {{ behaviour.parse_errors }} ·
+        unknown-IP flows: {{ behaviour.unknown_ip_flows }} (including IPv6: {{ behaviour.ipv6_flows }})
+      </p>
+    </div>
   </div>
 
   <section class="card mt-5">

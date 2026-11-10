@@ -26,6 +26,7 @@ from gilgamesh.rules import (
     RuleParamError,
     SuppressionField,
     default_catalogue,
+    rule_id_for_event,
 )
 
 
@@ -61,7 +62,15 @@ def make_event(**overrides: object) -> Event:
 def test_catalogue_covers_every_mvp_detector(service: RuleConfigService) -> None:
     detectors = {definition.detector for definition in service.catalogue.definitions()}
 
-    assert detectors == {"arp", "dns", "dhcp", "scan_flood", "inventory", "suricata"}
+    assert detectors == {
+        "arp",
+        "dns",
+        "dhcp",
+        "scan_flood",
+        "inventory",
+        "suricata",
+        "behaviour",
+    }
 
 
 def test_every_rule_id_is_unique(service: RuleConfigService) -> None:
@@ -291,3 +300,27 @@ def test_rule_definition_param_lookup() -> None:
     assert definition.param("threshold") is not None
     assert definition.param("missing") is None
     assert definition.defaults() == {"threshold": 5}
+
+
+def test_behaviour_rules_are_in_the_catalogue_and_map_to_the_event_type() -> None:
+    catalogue = default_catalogue()
+
+    assert catalogue.get("behaviour.volume_spike") is not None
+    assert catalogue.get("behaviour.new_destinations") is not None
+    assert catalogue.get("behaviour.beaconing") is not None
+    assert catalogue.require("behaviour.volume_spike").defaults() == {
+        "z_threshold": 5.0,
+        "min_bytes": 10_000_000,
+        "min_ratio": 10.0,
+    }
+    assert catalogue.require("behaviour.new_destinations").defaults()["min_new"] == 8
+    assert catalogue.require("behaviour.beaconing").defaults()["max_cov"] == 0.15
+
+    event = Event(
+        type=EventType.BEHAVIOUR_ANOMALY,
+        severity=Severity.MEDIUM,
+        detector="behaviour.volume_spike",
+        summary="x",
+        details={"reason": "volume_spike"},
+    )
+    assert rule_id_for_event(event) == "behaviour.volume_spike"

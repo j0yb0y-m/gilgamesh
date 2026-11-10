@@ -1,0 +1,51 @@
+<form method="post" action="/settings/behaviour" class="card mb-6 max-w-xl">
+  <div class="card-header">
+    <h2 class="card-title">{{ icons.icon("activity") }} Behaviour detection</h2>
+    <span class="pill {% if prefs.behaviour_enabled %}pill-trusted{% else %}pill-muted{% endif %}">
+      {% if prefs.behaviour_enabled %}on{% else %}off{% endif %}
+    </span>
+  </div>
+  <div class="card-body grid gap-4">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+
+    <p class="text-[12.5px] text-slate-600">
+      Detection is local and statistical: each device is compared with its own learned
+      baseline. No traffic, packets, or names leave this box.
+    </p>
+
+    <label class="flex items-center gap-2 text-[12.5px] text-slate-800">
+      <input type="checkbox" name="behaviour_enabled" value="1" class="check" {% if prefs.behaviour_enabled %}checked{% endif %} />
+      <span>Enable behaviour detection</span>
+    </label>
+
+    <div>
+      <label class="field" for="behaviour_calibration_days">Calibration (days)</label>
+      <input
+        id="behaviour_calibration_days"
+        name="behaviour_calibration_days"
+        type="number"
+        min="0"
+        max="30"
+        value="{{ prefs.behaviour_calibration_days }}"
+        required
+        class="input"
+      />
+      <span class="field-hint">
+        0–30 days. Detection starts after this window and at least 20 samples. Keep the
+        default 7 unless you are running a demo or a lab test.
+      </span>
+    </div>
+
+    {% if prefs.behaviour_calibration_days == 0 %}
+      <p class="notice">
+        {{ icons.icon("triangle-alert") }}
+        Calibration disabled (0 days): detection starts as soon as a device has 20 samples.
+      </p>
+    {% endif %}
+
+    <div class="flex flex-wrap items-center gap-3">
+      <button type="submit" class="btn btn-primary">{{ icons.icon("check") }}Save behaviour</button>
+      <a class="link text-[12.5px]" href="/rules">Tune the behaviour rules</a>
+    </div>
+  </div>
+</form>

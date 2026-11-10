@@ -58,7 +58,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 # docs/ holds research notes whose Python snippets are quoted evidence, not our
 # code. Ruff 0.17 formats Markdown code blocks; reformatting them would alter the
 # exact snippets we cite, so docs are excluded from both linting and formatting.
@@ -82,7 +82,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "S", "RUF", "ANN", "ASYNC", "C4"]
 quote-style = "double"
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 exclude = ["**/__pycache__", ".venv"]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
@@ -92,6 +92,7 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 # E2E browser tests are opt-in: `uv run pytest tests/e2e -m e2e --browser-channel chrome`.
 # The default run stays hermetic and fast.

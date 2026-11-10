@@ -386,6 +386,17 @@
     @apply min-w-0 flex-1 break-words text-slate-900;
   }
 
+  /* The template and the model both write plain text with paragraph breaks. This
+     preserves them without an inline style, which the CSP forbids. */
+  .explanation-text {
+    @apply whitespace-pre-wrap text-[12.5px] leading-relaxed text-slate-800;
+  }
+
+  /* The redacted JSON preview is read-only evidence, not an editable field. */
+  .preview-json {
+    @apply mt-1 max-h-72 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700;
+  }
+
   /* ===== links ============================================================= */
 
   .link {

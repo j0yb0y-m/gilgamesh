@@ -9,13 +9,14 @@ addresses, a rounded MAC is stored canonically, and trust/rename are explicit ac
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from gilgamesh.db import Database
 from gilgamesh.devices import DeviceStore
+from gilgamesh.models import Event, EventType, Severity
 
 
 @pytest.fixture
@@ -107,3 +108,49 @@ def test_survives_reopening_the_database(tmp_path: Path) -> None:
     reopened.initialize()
     assert DeviceStore(reopened).get("00:00:00:00:00:01").hostname == "Laptop"  # type: ignore[union-attr]
     reopened.close()
+
+
+def test_events_for_device_matches_source_or_destination(tmp_path: Path) -> None:
+    database = Database(tmp_path / "gilgamesh.db")
+    database.initialize()
+    try:
+        when = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
+        database.insert_event(
+            Event(
+                ts=when,
+                type=EventType.PORT_SCAN,
+                severity=Severity.LOW,
+                detector="scan",
+                summary="older source event",
+                src_mac="aa:bb:cc:00:00:01",
+            )
+        )
+        database.insert_event(
+            Event(
+                ts=when + timedelta(minutes=1),
+                type=EventType.PORT_SCAN,
+                severity=Severity.LOW,
+                detector="scan",
+                summary="newer destination event",
+                dst_mac="aa:bb:cc:00:00:01",
+            )
+        )
+        database.insert_event(
+            Event(
+                ts=when + timedelta(minutes=2),
+                type=EventType.PORT_SCAN,
+                severity=Severity.LOW,
+                detector="scan",
+                summary="unrelated event",
+                src_mac="aa:bb:cc:00:00:02",
+            )
+        )
+
+        events = database.events_for_device("aa:bb:cc:00:00:01")
+
+        assert [event.summary for event in events] == [
+            "newer destination event",
+            "older source event",
+        ]
+    finally:
+        database.close()

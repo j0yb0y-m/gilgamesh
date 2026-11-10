@@ -1,0 +1,176 @@
+<section id="ai-settings" class="card mb-6 max-w-xl">
+  <div class="card-header">
+    <h2 class="card-title">{{ icons.icon("settings") }} AI explanations</h2>
+    <span class="pill {% if ai.enabled %}pill-trusted{% else %}pill-muted{% endif %}">
+      {% if ai.enabled %}on{% else %}off{% endif %}
+    </span>
+  </div>
+  <form method="post" action="/settings/ai" class="card-body grid gap-4">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+
+    <p class="text-[12.5px] text-slate-600">
+      AI explanations are optional. Alerts and detection work without them. Only the
+      redacted summary leaves this device.
+    </p>
+
+    <label class="flex items-center gap-2 text-[12.5px] text-slate-800">
+      <input type="checkbox" name="enabled" value="1" class="check" {% if ai.enabled %}checked{% endif %} />
+      <span>Enable AI explanations</span>
+    </label>
+
+    <div>
+      <label class="field" for="ai_preset">Provider preset</label>
+      <select id="ai_preset" name="preset" class="input" data-ai-preset>
+        {% for item in presets %}
+          <option
+            value="{{ item.id }}"
+            data-kind="{{ item.kind }}"
+            data-base-url="{{ item.base_url }}"
+            data-model="{{ item.model }}"
+            data-local="{{ '1' if item.local_only else '0' }}"
+            {% if ai.preset == item.id %}selected{% endif %}
+          >{{ item.label }}</option>
+        {% endfor %}
+      </select>
+      <span class="field-hint">
+        Choosing a preset fills the fields below. Every field stays editable, because
+        providers rename models more often than this page changes.
+      </span>
+    </div>
+
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label class="field" for="ai_kind">API shape</label>
+        <select id="ai_kind" name="kind" class="input">
+          <option value="openai" {% if ai.kind == "openai" %}selected{% endif %}>OpenAI-compatible</option>
+          <option value="anthropic" {% if ai.kind == "anthropic" %}selected{% endif %}>Anthropic</option>
+        </select>
+      </div>
+      <div>
+        <label class="field" for="ai_model">Model</label>
+        <input id="ai_model" name="model" value="{{ ai.model }}" maxlength="200" required class="input" />
+      </div>
+    </div>
+
+    <div>
+      <label class="field" for="ai_base_url">Base URL</label>
+      <input id="ai_base_url" name="base_url" value="{{ ai.base_url }}" maxlength="500" required class="input mono" />
+      <span class="field-hint">
+        Remote providers must use HTTPS. Plain HTTP and private addresses require the
+        local-provider checkbox below.
+      </span>
+    </div>
+
+    <div>
+      <label class="field" for="ai_api_key">API key</label>
+      <input
+        id="ai_api_key"
+        name="api_key"
+        type="password"
+        value=""
+        autocomplete="off"
+        class="input"
+        placeholder="{% if ai_key_set %}Leave blank to keep the stored key{% else %}Paste the provider's key{% endif %}"
+      />
+      <span class="field-hint">
+        {% if ai_key_set and ai_key_available %}
+          API key is set. Leave this blank to keep it.
+        {% elif ai_key_set %}
+          API key is set but cannot be read — re-enter it.
+        {% else %}
+          API key is not set. Local providers may not need one.
+        {% endif %}
+      </span>
+    </div>
+
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div>
+        <label class="field" for="ai_max_tokens">Max tokens</label>
+        <input
+          id="ai_max_tokens"
+          name="max_tokens"
+          type="number"
+          min="100"
+          max="1000"
+          value="{{ ai.max_tokens }}"
+          required
+          class="input"
+        />
+      </div>
+      <div>
+        <label class="field" for="ai_timeout_s">Timeout (seconds)</label>
+        <input
+          id="ai_timeout_s"
+          name="timeout_s"
+          type="number"
+          min="5"
+          max="60"
+          step="0.5"
+          value="{{ ai.timeout_s }}"
+          required
+          class="input"
+        />
+      </div>
+    </div>
+
+    <label class="flex items-center gap-2 text-[12.5px] text-slate-800">
+      <input type="checkbox" name="local_provider" value="1" class="check" {% if ai.local_provider %}checked{% endif %} />
+      <span>Local provider (allow HTTP and private addresses)</span>
+    </label>
+
+    <fieldset class="grid gap-2">
+      <legend class="field">Redaction</legend>
+      <label class="flex items-center gap-2 text-[12.5px] text-slate-800">
+        <input type="checkbox" name="redact_mac" value="1" class="check" {% if ai.redact_mac %}checked{% endif %} />
+        <span>Replace MAC addresses</span>
+      </label>
+      <label class="flex items-center gap-2 text-[12.5px] text-slate-800">
+        <input type="checkbox" name="redact_hostname" value="1" class="check" {% if ai.redact_hostname %}checked{% endif %} />
+        <span>Replace hostnames and device labels</span>
+      </label>
+      <label class="flex items-center gap-2 text-[12.5px] text-slate-800">
+        <input type="checkbox" name="redact_ips" value="1" class="check" {% if ai.redact_ips %}checked{% endif %} />
+        <span>Replace IP addresses</span>
+      </label>
+      <span class="field-hint">
+        All three are on by default. Turn one off only if you accept that identifier
+        leaving this device.
+      </span>
+    </fieldset>
+
+    <div class="flex flex-wrap items-center gap-3">
+      <button type="submit" class="btn btn-primary">{{ icons.icon("check") }}Save AI settings</button>
+      <button type="submit" formaction="/settings/ai/test" class="btn btn-ghost">
+        {{ icons.icon("activity") }}Test connection
+      </button>
+    </div>
+  </form>
+
+  <div class="card-body border-t border-slate-100">
+    <h3 class="card-title">Preview what will be sent</h3>
+    <p class="field-hint">
+      This is the exact redacted JSON a provider would receive. The free-text summary
+      and the raw event details are never included.
+    </p>
+    {% if preview.latest_json %}
+      <p class="field mt-3">Latest alert</p>
+      <pre class="preview-json">{{ preview.latest_json }}</pre>
+    {% elif preview.has_latest %}
+      <p class="field-hint mt-3">The latest alert is too large to send.</p>
+    {% else %}
+      <p class="field-hint mt-3">No alert to preview yet.</p>
+    {% endif %}
+    <p class="field mt-3">Sample behaviour alert</p>
+    <pre class="preview-json">{{ preview.sample_json }}</pre>
+  </div>
+
+  {% if ai_key_set %}
+    <form method="post" action="/settings/ai/key/clear" class="card-footer">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}" />
+      <span class="text-[11px] text-slate-500">
+        Removing the key disables AI explanations until a new one is saved.
+      </span>
+      <button type="submit" class="btn btn-ghost btn-sm">{{ icons.icon("trash") }}Clear key</button>
+    </form>
+  {% endif %}
+</section>

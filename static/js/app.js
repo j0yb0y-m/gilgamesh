@@ -179,6 +179,39 @@
     }));
   }
 
+  /** Fill the AI fields from the selected preset. The CSP build allows no inline
+   * expressions, so the preset data lives in `data-*` attributes and this listener
+   * does the copying. Every field stays editable afterwards. */
+  function bindAiPreset() {
+    const select = document.querySelector("[data-ai-preset]");
+    const form = select ? select.closest("form") : null;
+    if (!select || !form) {
+      return;
+    }
+
+    select.addEventListener("change", () => {
+      const option = select.selectedOptions[0];
+      if (!option) {
+        return;
+      }
+      for (const [name, key] of [
+        ["kind", "kind"],
+        ["base_url", "baseUrl"],
+        ["model", "model"],
+      ]) {
+        const input = form.querySelector(`[name="${name}"]`);
+        if (input && option.dataset[key]) {
+          input.value = option.dataset[key];
+        }
+      }
+      const local = form.querySelector('[name="local_provider"]');
+      if (local) {
+        local.checked = option.dataset.local === "1";
+      }
+    });
+  }
+
   document.addEventListener("alpine:init", registerComponents);
+  bindAiPreset();
   connectLiveFeed();
 })();
